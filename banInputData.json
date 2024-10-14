@@ -1,0 +1,28 @@
+[
+    {
+        "grainId": 10,
+        "grain_xy": [12,45],
+        "patternFileName": "cropped_out_00000_fake_B.png",
+        "LRS_value": 1.5e6,
+        "points": [
+            {"hkl": "110", "P1P2": [[154, 130], [163, 152]], "refWidth": 100},
+            {"hkl": "220", "P1P2": [[81, 63], [90, 48]], "refWidth": 120},
+            {"hkl": "111", "P1P2": [[41, 100], [61, 100]], "refWidth": 105},
+            {"hkl": "420", "P1P2": [[107, 171], [102, 184]], "refWidth": 105}
+        ],
+        "comment": "Big grain"
+    },
+    {
+        "grainId": 11,
+        "grain_xy": [56,95],
+        "patternFileName": "cropped_out_00003_real_A.png",
+        "LRS_value": -5.5e6,
+        "points": [
+            {"hkl": "110", "P1P2": [[154, 130], [163, 152]], "refWidth": 100},
+            {"hkl": "220", "P1P2": [[81, 63], [90, 48]], "refWidth": 120},
+            {"hkl": "111", "P1P2": [[41, 100], [61, 100]], "refWidth": 105},
+            {"hkl": "420", "P1P2": [[107, 171], [102, 184]], "refWidth": 105}
+        ],
+        "comment": "Another grain"
+    }
+]
