@@ -1,0 +1,26 @@
+[
+    {
+        "grainId": 10,
+        "grain_xy": [12,45],
+        "patternFileName": "testData/ML_kikuchi_test_1.png",
+        "LRS_value": 1.5e6,
+        "points": [
+            {"hkl": "110", "central_line": [65, 44, 237, 151], "refWidth": 100},
+            {"hkl": "220", "central_line": [60, 157, 249, 125], "refWidth": 120}
+
+        ],
+        "comment": "Big grain"
+    },
+    {
+        "grainId": 11,
+        "grain_xy": [56,95],
+        "patternFileName": "testData/poorKikuci.png",
+        "LRS_value": -5.5e6,
+        "points": [
+            {"hkl": "110", "central_line": [63, 105, 210, 200], "refWidth": 100},
+            {"hkl": "220", "central_line": [169, 86, 193, 201], "refWidth": 120}
+
+        ],
+        "comment": "Another grain"
+    }
+]

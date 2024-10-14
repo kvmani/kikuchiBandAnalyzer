@@ -1,16 +1,15 @@
-import numpy as np
-import cv2
-from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
 import logging
-from scipy.signal import find_peaks
-from scipy.optimize import curve_fit
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 
 def gaussian(x, amp, mean, stddev):
     """Gaussian function for fitting."""
     return amp * np.exp(-((x - mean) ** 2) / (2 * stddev ** 2))
+
 
 class BandDetectionStrategy:
     def __init__(self, image, central_line, config):
@@ -183,11 +182,6 @@ class RectangularAreaBandDetector:
 
         return rotated_image[box_y1:box_y2, box_x1:box_x2], rotated_image, rect_corners
 
-    import cv2
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import logging
-
     def sample_intensities(self, upright_rectangle):
         """
         Sample the intensities from the upright rectangular region.
@@ -202,7 +196,7 @@ class RectangularAreaBandDetector:
         scaling_factor = num_columns / original_width
 
         # Resize the image
-        resized_image = cv2.resize(upright_rectangle, (num_columns, num_rows,  ))  # Correct shape order
+        resized_image = cv2.resize(upright_rectangle, (num_columns, num_rows,))  # Correct shape order
         logging.info(
             f"Sampled intensities from the rectangle: {resized_image.shape} with scaling factor: {scaling_factor}")
 
@@ -235,18 +229,6 @@ class RectangularAreaBandDetector:
 
         return resized_image
 
-    import numpy as np
-    import logging
-    from scipy.ndimage import gaussian_filter1d
-
-    import numpy as np
-    import logging
-    from scipy.ndimage import gaussian_filter1d
-
-    import numpy as np
-    import logging
-    from scipy.ndimage import gaussian_filter1d
-
     def detect_edges(self, profile):
         """
         Detect edges on the intensity profile using minima detection.
@@ -270,26 +252,6 @@ class RectangularAreaBandDetector:
             f"Central peak detected at: {central_peak_index}, with band start at {left_min} and end at {right_min}")
         return left_min, right_min, central_peak_index
 
-    # def detect_edges(self, profile):
-    #     """
-    #     Detect edges on the intensity profile using a gradient-based method.
-    #     :param profile: 1D intensity profile.
-    #     :return: Indices of the band start and end.
-    #     """
-    #     smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
-    #     gradient = np.gradient(smoothed_profile)
-    #
-    #     # Use a threshold to find significant gradient changes (edge detection)
-    #     gradient_threshold = self.config.get("gradient_threshold", 50)
-    #     peaks, _ = find_peaks(np.abs(gradient), height=gradient_threshold)
-    #
-    #     if len(peaks) >= 2:
-    #         band_start, band_end = peaks[0], peaks[-1]
-    #         logging.info(f"Edges detected at: {band_start}, {band_end}")
-    #         return band_start, band_end
-    #     else:
-    #         logging.info("Failed to detect edges.")
-    #         return None, None
 
     def plot_debug(self, rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end, central_peak):
         """
@@ -323,7 +285,7 @@ class RectangularAreaBandDetector:
 
             # Midpoint of the central line (this is where band_start and band_end offset is measured)
             mid_x, mid_y = (self.central_line[0] + self.central_line[2]) / 2, (
-                        self.central_line[1] + self.central_line[3]) / 2
+                    self.central_line[1] + self.central_line[3]) / 2
 
             # Convert band start/end profile indices into offsets in the image space
             start_offset = (band_start - central_peak) / self.scaling_factor  # Use central_peak instead of midpoint
@@ -376,8 +338,24 @@ class RectangularAreaBandDetector:
             ax[0, 1].set_title("Rotated Image with Rectangle")
 
         # Plot 4: Summed intensity profile with detected edges
+        # ax[1, 0].imshow(rect_area, cmap='gray')
+        # ax[1, 0].set_title("Upright Rectangular Region")
+        # Plot 4: Upright rectangle region after rotation with detected band edges
         ax[1, 0].imshow(rect_area, cmap='gray')
         ax[1, 0].set_title("Upright Rectangular Region")
+
+        # Convert band start/end profile indices into image space considering the scaling factor
+        if band_start is not None and band_end is not None:
+            # The rectangle was resized, so we need to adjust band_start and band_end back to the original dimensions
+            start_x = int(band_start / self.scaling_factor)
+            end_x = int(band_end / self.scaling_factor)
+
+            # Draw vertical lines at the detected band start and band end positions in the rectangle
+            ax[1, 0].axvline(x=start_x, color='g', linestyle='--', label='Band Start')
+            ax[1, 0].axvline(x=end_x, color='r', linestyle='--', label='Band End')
+
+        # Adding a legend for band start and end
+        ax[1, 0].legend()
 
         # Plot 5: Intensity profile and detected band start/end and central peak
         ax[1, 1].plot(summed_profile, label='Summed Intensity')

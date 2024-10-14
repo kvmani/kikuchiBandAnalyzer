@@ -1,5 +1,6 @@
 import yaml
 
+
 def load_config(config_path="bandDetectorOptions.yml"):
     """
     Loads configuration from a YAML file.
