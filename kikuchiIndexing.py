@@ -34,13 +34,18 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         kw.update(kwargs)
 
         kikuchi_line_label_list = []
+        kikuchi_line_dict_list=[]
         is_finite = np.isfinite(coords)[..., 0]
         coords[~is_finite] = -1
 
         for i in range(reflectors.shape[0]):
             if not np.allclose(coords[..., i, :], -1):  # All NaNs
-                x = coords[..., i, 0]
-                y = coords[..., i, 1]
+                x1 = coords[..., i, 0]
+                y1 = coords[..., i, 1]
+                x2 = coords[..., i, 2]
+                y2 = coords[..., i, 3]
+                x=0.5*(x1+x2)
+                y=0.5*(y1+y2)
                 x[~is_finite[..., i]] = np.nan
                 y[~is_finite[..., i]] = np.nan
                 x = x.squeeze()
@@ -48,8 +53,14 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 # Create a text marker with the label for each Kikuchi line
                 text_marker = text(x=x, y=y, text=texts[i], **kw)
                 kikuchi_line_label_list.append(text_marker)
+                kikuchi_line_dict_list.append({
 
-        return kikuchi_line_label_list
+                "hkl":texts[i], "line_coordinates":[x1,y1,x2,y2],
+                "line_mid_points":[x,y],
+                 "reflector":self._reflectors[i],
+                })
+
+        return kikuchi_line_label_list, kikuchi_line_dict_list
 
     def as_markers(
             self,
@@ -79,9 +90,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         if kikuchi_line_labels:
             if kikuchi_line_labels_kwargs is None:
                 kikuchi_line_labels_kwargs = {}
-            markers += self._kikuchi_line_labels_as_markers(**kikuchi_line_labels_kwargs)
+            markersTmp,  kikuchi_line_dict_list = self._kikuchi_line_labels_as_markers(**kikuchi_line_labels_kwargs)
+            markers+=markersTmp
 
-        return markers
+
+        return markers, kikuchi_line_dict_list
 
 
 # Main function for testing the custom class
@@ -134,8 +147,8 @@ def main():
     sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
 
     # Add markers (including zone axis labels) to the signal
-    #markers = sim.as_markers(kikuchi_line_labels=True)
-    markers = sim.as_markers(zone_axes_labels=True)
+    markers, kikuchi_line_dict_list = sim.as_markers(kikuchi_line_labels=True,zone_axes_labels=True)
+    #markers = sim.as_markers(zone_axes_labels=True)
     s.add_marker(markers, plot_marker=False, permanent=True)
 
     # RGB navigator (optional visualization)
