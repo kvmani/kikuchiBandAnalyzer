@@ -12,9 +12,10 @@ def gaussian(x, amp, mean, stddev):
 
 
 class BandDetectionStrategy:
-    def __init__(self, image, central_line, config):
+    def __init__(self, image, central_line, config,hkl):
         self.image = image
         self.central_line = central_line
+        self.hkl = hkl
         self.config = config
 
     def detect(self):
@@ -81,7 +82,7 @@ class GaussianBandDetector(BandDetectionStrategy):
 
 
 class RectangularAreaBandDetector:
-    def __init__(self, image, central_line, config):
+    def __init__(self, image, central_line, config,hkl):
         """
         Initializes the band detector for rectangular area-based strategy.
 
@@ -92,6 +93,7 @@ class RectangularAreaBandDetector:
         self.image = image
         self.central_line = central_line
         self.config = config
+        self.hkl = hkl
         self.debug = config.get('debug', False)
 
     def detect(self):
@@ -365,7 +367,10 @@ class RectangularAreaBandDetector:
         if central_peak is not None:
             ax[1, 1].axvline(x=central_peak, color='b', linestyle=':', label='Central Peak')
 
-        ax[1, 1].set_title(f"Summed Intensity Profile\n BandWidth={self.band_width} ")
+        # ax[1, 1].set_title(f"Summed Intensity Profile\n BandWidth={self.band_width} ")
+
+        ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\nBandWidth={self.band_width}")
+
         ax[1, 1].legend()
 
         plt.tight_layout()

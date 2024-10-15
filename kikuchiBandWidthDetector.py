@@ -3,7 +3,7 @@ import json
 import cv2
 import yaml
 from strategies import GradientBandDetector, GaussianBandDetector, RectangularAreaBandDetector
-
+import pandas as pd
 # Set up logging
 logging.basicConfig(filename="bandDetector.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -60,37 +60,78 @@ class BandDetector:
     def detect_bands(self):
         """
         Detects the bands for each point in the `points` list.
-
         :return: A list of dictionaries with detection results for each band.
         """
         results = []
-
         for point in self.points:
-            hkl = point["hkl"]
+            hkl = point["hkl"]  # Extract hkl value from JSON
             central_line = point["central_line"]
             ref_width = point["refWidth"]
 
-            # Choose the strategy and detect the band
-            if self.strategy == 'gradient':
-                detector = GradientBandDetector(self.image, central_line, self.config)
-            elif self.strategy == 'gaussian':
-                detector = GaussianBandDetector(self.image, central_line, self.config)
-            elif self.strategy == 'rectangular_area':
-                detector = RectangularAreaBandDetector(self.image, central_line, self.config)
-            else:
-                raise ValueError(f"Unknown strategy: {self.strategy}")
-
-            result = detector.detect()
+            # Detect the band, pass the hkl directly to the detector
+            result = self.detect_band(central_line, hkl)
             result["hkl"] = hkl  # Add hkl label to the result
-            result["central_line"] = central_line  # Add central line for reference
             result["refWidth"] = ref_width  # Add reference width
 
-            # Store each band's result
             results.append(result)
-
-            logging.info(f"Band detection for {hkl} completed using {self.strategy} strategy.")
-
         return results
+
+    def detect_band(self, central_line, hkl):
+        """
+        Detect a single band using the strategy and central line.
+        :param central_line: Central line of the band.
+        :param hkl: Miller indices of the band.
+        :return: A dictionary with detection results.
+        """
+        if self.strategy == 'gradient':
+            detector = GradientBandDetector(self.image, central_line, self.config, hkl)
+        elif self.strategy == 'gaussian':
+            detector = GaussianBandDetector(self.image, central_line, self.config, hkl)
+        elif self.strategy == 'rectangular_area':
+            detector = RectangularAreaBandDetector(self.image, central_line, self.config, hkl)
+        else:
+            raise ValueError(f"Unknown strategy: {self.strategy}")
+
+        return detector.detect()
+
+    # def detect_bands(self):
+    #     """
+    #     Detects the bands for each point in the `points` list.
+    #
+    #     :return: A list of dictionaries with detection results for each band.
+    #     """
+    #     results = []
+    #
+    #     for point in self.points:
+    #         hkl = point["hkl"]
+    #         central_line = point["central_line"]
+    #         ref_width = point["refWidth"]
+    #
+    #         result = self.detect_band(central_line, hkl)
+    #         result["hkl"] = hkl  # Add hkl label to the result
+    #         result["refWidth"] = ref_width
+    #
+    #         # Choose the strategy and detect the band
+    #         if self.strategy == 'gradient':
+    #             detector = GradientBandDetector(self.image, central_line, self.config,self.hkl)
+    #         elif self.strategy == 'gaussian':
+    #             detector = GaussianBandDetector(self.image, central_line, self.config,self.hkl)
+    #         elif self.strategy == 'rectangular_area':
+    #             detector = RectangularAreaBandDetector(self.image, central_line, self.config,self.hkl)
+    #         else:
+    #             raise ValueError(f"Unknown strategy: {self.strategy}")
+    #
+    #         result = detector.detect()
+    #         result["hkl"] = hkl  # Add hkl label to the result
+    #         result["central_line"] = central_line  # Add central line for reference
+    #         result["refWidth"] = ref_width  # Add reference width
+    #
+    #         # Store each band's result
+    #         results.append(result)
+    #
+    #         logging.info(f"Band detection for {hkl} completed using {self.strategy} strategy.")
+    #
+    #     return results
 
 
 def process_images(json_input):
@@ -132,6 +173,56 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
     with open(output_path, 'w') as file:
         json.dump(results, file, indent=4)
     logging.info(f"Results saved to {output_path}.")
+    print(output_path)
+
+
+
+def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
+    """
+    Saves the processed results to an Excel (.xlsx) file.
+
+    :param results: List of dictionaries with processed band data.
+    :param output_path: Path to save the Excel output file.
+    """
+    # Convert the list of dictionaries to a pandas DataFrame
+    data = []
+
+    for result in results:
+        grain_id = result.get("grainId")
+        grain_xy = result.get("grain_xy")
+        pattern_file_name = result.get("patternFileName")
+        lrs_value = result.get("LRS_value")
+        comment = result.get("comment")
+        for band in result["points"]:
+            hkl = band.get("hkl")
+            central_line = band.get("central_line")
+            ref_width = band.get("refWidth")
+            band_width = band.get("bandWidth", None)  # Band width from detection
+            central_peak = band.get("centralPeak", None)  # Central peak from detection
+            success = band.get("success", False)  # Detection success
+
+            # Append the row to data
+            data.append({
+                "Grain ID": grain_id,
+                "Grain XY": grain_xy,
+                "Pattern File": pattern_file_name,
+                "LRS Value": lrs_value,
+                "Comment": comment,
+                "hkl": hkl,
+                "Central Line": central_line,
+                "Reference Width": ref_width,
+                "Band Width": band_width,
+                "Central Peak": central_peak,
+                "Success": success
+            })
+
+    # Create a DataFrame
+    df = pd.DataFrame(data)
+
+    # Save the DataFrame to an Excel file
+    df.to_excel(output_path, index=False, engine='openpyxl')
+
+    logging.info(f"Results saved to {output_path}.")
 
 
 if __name__ == "__main__":
@@ -140,6 +231,9 @@ if __name__ == "__main__":
 
     # Process each image and its bands
     processed_results = process_images(json_input)
+    # Assuming 'processed_results' is the list of dictionaries with band detection results
+    # Assuming 'processed_results' is the list of dictionaries with band detection results
+    save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
-    # Save the results to JSON
-    save_results_to_json(processed_results)
+
+    (processed_results)
