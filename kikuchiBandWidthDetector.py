@@ -170,6 +170,7 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
     :param results: List of dictionaries with processed band data.
     :param output_path: Path to save the JSON output file.
     """
+
     with open(output_path, 'w') as file:
         json.dump(results, file, indent=4)
     logging.info(f"Results saved to {output_path}.")
@@ -193,7 +194,7 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
         pattern_file_name = result.get("patternFileName")
         lrs_value = result.get("LRS_value")
         comment = result.get("comment")
-        for band in result["points"]:
+        for band in result["bands"]:
             hkl = band.get("hkl")
             central_line = band.get("central_line")
             ref_width = band.get("refWidth")
@@ -205,6 +206,7 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
             data.append({
                 "Grain ID": grain_id,
                 "Grain XY": grain_xy,
+
                 "Pattern File": pattern_file_name,
                 "LRS Value": lrs_value,
                 "Comment": comment,
@@ -234,6 +236,7 @@ if __name__ == "__main__":
     # Assuming 'processed_results' is the list of dictionaries with band detection results
     # Assuming 'processed_results' is the list of dictionaries with band detection results
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
+    #save_results_to_json(processed_results)
 
 
-    (processed_results)
+

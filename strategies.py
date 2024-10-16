@@ -110,7 +110,10 @@ class RectangularAreaBandDetector:
         summed_profile = np.sum(self.sample_intensities(rect_area), axis=0)
 
         # Detect band start, end, and central peak in the profile
-        band_start, band_end, central_peak = self.detect_edges(summed_profile)
+        # band_start, band_end, central_peak = self.detect_edges(summed_profile)
+        result = self.detect_edges(summed_profile)
+        result["central_line"]=self.central_line
+        band_start, band_end, central_peak,psnr=result["bandStart"],result["bandEnd"],result["centralPeak"],result["psnr"]
 
         if band_start is not None and band_end is not None:
             # Calculate the band width and adjust for the scaling factor
@@ -126,10 +129,15 @@ class RectangularAreaBandDetector:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
 
-        return {
+        final_result = {
             "bandWidth": self.band_width,
-            "success": success
+            "success": success,
+            **result  # Merging result with psnr
         }
+
+        print(f"Final result: {final_result}")  # Add this for debugging
+
+        return final_result
 
     def extract_rotated_rectangle(self, x1, y1, x2, y2, rect_width):
         """
@@ -231,29 +239,50 @@ class RectangularAreaBandDetector:
 
         return resized_image
 
+
+
     def detect_edges(self, profile):
         """
-        Detect edges on the intensity profile using minima detection.
+        Detect edges on the intensity profile using minima detection and calculate PSNR.
         :param profile: 1D intensity profile.
-        :return: Indices of the band start (left_min), band end (right_min), and central peak.
+        :return: Indices of the band start (left_min), band end (right_min), central peak, and PSNR value.
         """
         # Step 1: Smooth the profile to reduce noise
         smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
 
-        # Step 2: Find the maximum (central peak) in the smoothened profile
+        # Step 2: Find the maximum (central peak) in the smoothed profile
         central_peak_index = np.argmax(smoothed_profile)
+        peak_max = smoothed_profile[central_peak_index]  # Peak maximum
 
         # Step 3: Find the minimum on the left side of the central peak
-        left_min = np.argmin(smoothed_profile[:central_peak_index])  # Minimum before the peak
+        left_min_index = np.argmin(smoothed_profile[:central_peak_index])  # Minimum before the peak
+        left_min = smoothed_profile[left_min_index]
 
         # Step 4: Find the minimum on the right side of the central peak
-        right_min = np.argmin(smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
+        right_min_index = np.argmin(
+            smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
+        right_min = smoothed_profile[right_min_index]
 
-        # Step 5: Return the indices of the band start (left_min), band end (right_min), and central peak
+        # Step 5: Calculate the average of the left and right minima
+        noise_average = (left_min + right_min) / 2
+
+        # Step 6: Calculate PSNR (Peak Max divided by the average of left and right minima)
+        if noise_average != 0:
+            psnr_value = peak_max / noise_average
+        else:
+            psnr_value = np.inf  # Handle case where noise is zero to avoid division by zero
+
         logging.info(
-            f"Central peak detected at: {central_peak_index}, with band start at {left_min} and end at {right_min}")
-        return left_min, right_min, central_peak_index
+            f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
+        logging.info(f"PSNR value: {psnr_value}")
 
+        # Step 7: Return the results in the dictionary
+        return {
+            "bandStart": left_min_index,
+            "bandEnd": right_min_index,
+            "centralPeak": central_peak_index,
+            "psnr": psnr_value  # Include PSNR in the results dictionary
+        }
 
     def plot_debug(self, rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end, central_peak):
         """
