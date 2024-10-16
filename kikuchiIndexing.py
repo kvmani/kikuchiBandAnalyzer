@@ -10,6 +10,7 @@ from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
 from hyperspy.utils.markers import line_segment, point, text
+import pandas as pd
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
 KikuchiPatternSimulator = kp.simulations.KikuchiPatternSimulator
@@ -53,12 +54,40 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 # Create a text marker with the label for each Kikuchi line
                 text_marker = text(x=x, y=y, text=texts[i], **kw)
                 kikuchi_line_label_list.append(text_marker)
-                kikuchi_line_dict_list.append({
+                # kikuchi_line_dict_list.append({
+                # "hkl":texts[i], "line_coordinates":[x1,y1,x2,y2],
+                # "line_mid_points":[x,y],
+                #  "reflector":self._reflectors[i],
+                # })
+        for i in range(reflectors.shape[0]):
+            # Assuming x1, y1, x2, y2 are (r, c) matrices (line coordinates) and x, y are midpoints
+            # Flatten the (r, c) matrices
+            x1_flat = x1.flatten()
+            y1_flat = y1.flatten()
+            x2_flat = x2.flatten()
+            y2_flat = y2.flatten()
+            x = x.flatten()
+            y = y.flatten()
 
-                "hkl":texts[i], "line_coordinates":[x1,y1,x2,y2],
-                "line_mid_points":[x,y],
-                 "reflector":self._reflectors[i],
+            # Construct a dict for each Kikuchi line, separating flattened line coordinates
+            for j in range(len(x1_flat)):  # Iterate over the flattened coordinates
+                kikuchi_line_dict_list.append({
+                    "pointId":j,
+                    "hkl": texts[i],
+                    "central_line": [x1_flat[j],y1_flat[j],x2_flat[j],y2_flat[j],],
+                    "line_mid_xy": [x[j], y[j]],  # Midpoint x
+                    "line_mid_y": 0.5 * (y1_flat[j] + y2_flat[j]),  # Midpoint y
+
                 })
+
+        # Convert to DataFrame
+        df = pd.DataFrame(kikuchi_line_dict_list)
+
+        # Save as JSON
+        df.to_json("kikuchi_lines.json", orient="records", indent=4)
+
+        # Save as Excel
+        df.to_excel("kikuchi_lines.xlsx", index=False, engine="openpyxl")
 
         return kikuchi_line_label_list, kikuchi_line_dict_list
 
@@ -116,7 +145,7 @@ def main():
     # Load dataset and preprocess
     data_path = r"C:\Users\kvman\Downloads\IS_Ni_ebsd_data\Nickel.h5"
     s = kp.load(data_path, lazy=True)
-    s.crop(1, start=10, end=20)
+    s.crop(1, start=10, end=15)
 
     # Detector setup and pattern extraction
     sig_shape = s.axes_manager.signal_shape[::-1]
@@ -150,7 +179,6 @@ def main():
     markers, kikuchi_line_dict_list = sim.as_markers(kikuchi_line_labels=True,zone_axes_labels=True)
     #markers = sim.as_markers(zone_axes_labels=True)
     s.add_marker(markers, plot_marker=False, permanent=True)
-
     # RGB navigator (optional visualization)
     v_ipf = Vector3d.xvector()
     sym = xmap.phases[0].point_group
