@@ -1,6 +1,7 @@
 import logging
 import json
 import cv2
+import numpy as np
 import yaml
 from strategies import GradientBandDetector, GaussianBandDetector, RectangularAreaBandDetector
 import pandas as pd
@@ -161,7 +162,19 @@ def process_images(json_input):
         processed_data.append(entry)
 
     return processed_data
-
+def convert_results(results):
+    if isinstance(results, dict):
+        return {key: convert_results(value) for key, value in results.items()}
+    elif isinstance(results, list):
+        return [convert_results(item) for item in results]
+    elif isinstance(results, np.integer):
+        return int(results)
+    elif isinstance(results, np.floating):
+        return float(results)
+    elif isinstance(results, np.ndarray):
+        return results.tolist()  # Convert arrays to lists
+    else:
+        return results
 
 def save_results_to_json(results, output_path="bandOutputData.json"):
     """
@@ -170,9 +183,11 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
     :param results: List of dictionaries with processed band data.
     :param output_path: Path to save the JSON output file.
     """
+    results_serializable = convert_results(results)
 
     with open(output_path, 'w') as file:
-        json.dump(results, file, indent=4)
+        json.dump(results_serializable, file, indent=4)
+        # json.dump(results, file, indent=4,)
     logging.info(f"Results saved to {output_path}.")
     print(output_path)
 
@@ -236,7 +251,7 @@ if __name__ == "__main__":
     # Assuming 'processed_results' is the list of dictionaries with band detection results
     # Assuming 'processed_results' is the list of dictionaries with band detection results
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
-    #save_results_to_json(processed_results)
+    save_results_to_json(processed_results)
 
 
 
