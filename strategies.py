@@ -10,6 +10,72 @@ def gaussian(x, amp, mean, stddev):
     """Gaussian function for fitting."""
     return amp * np.exp(-((x - mean) ** 2) / (2 * stddev ** 2))
 
+class LineTrimmer:
+    def __init__(self, image_width, image_height):
+        """
+        Initializes the LineTrimmer with image bounds.
+        Calculates the largest inscribed circle.
+        """
+        self.image_width = image_width
+        self.image_height = image_height
+        self.image_center = (image_width / 2, image_height / 2)
+        self.radius = 0.9*min(image_width, image_height) / 2  # Radius of the inscribed circle
+
+    def _distance(self, x1, y1, x2, y2):
+        """
+        Calculate the Euclidean distance between two points.
+        """
+        return np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+    def _trim_line_to_circle(self, x1, y1, x2, y2):
+        """
+        Trim the central line coordinates (x1, y1, x2, y2) to ensure they stay within the inscribed circle,
+        while preserving the original slope and minimizing the shift.
+        Only trim the points that are outside the circle.
+        If the entire line is inside the circle, return the original points unmodified.
+        """
+        # Get the center and radius of the circle
+        cx, cy = self.image_center
+        r = self.radius
+
+        # Check if each point is inside the circle
+        dist1 = self._distance(x1, y1, cx, cy)
+        dist2 = self._distance(x2, y2, cx, cy)
+
+        # If both points are inside the circle, return the original points
+        if dist1 <= r and dist2 <= r:
+            return x1, y1, x2, y2
+
+        # Parametrize the line equation: (x - x1) / (x2 - x1) = (y - y1) / (y2 - y1)
+        dx = x2 - x1
+        dy = y2 - y1
+        a = dx ** 2 + dy ** 2
+        b = 2 * (dx * (x1 - cx) + dy * (y1 - cy))
+        c = (x1 - cx) ** 2 + (y1 - cy) ** 2 - r ** 2
+        discriminant = b ** 2 - 4 * a * c
+
+        # If discriminant is negative, the line is completely outside the circle
+        if discriminant < 0:
+            raise ValueError("The line does not intersect the circle and lies completely outside.")
+
+        # Find the two possible t values (t1 and t2) where the line intersects the circle
+        t1 = (-b - np.sqrt(discriminant)) / (2 * a)
+        t2 = (-b + np.sqrt(discriminant)) / (2 * a)
+
+        # Find the new clipped points on the circle
+        new_x1, new_y1 = x1, y1  # Default to original points
+        new_x2, new_y2 = x2, y2
+
+        # Only update the points that lie outside the circle
+        if dist1 > r:
+            new_x1 = x1 + t1 * dx
+            new_y1 = y1 + t1 * dy
+
+        if dist2 > r:
+            new_x2 = x1 + t2 * dx
+            new_y2 = y1 + t2 * dy
+
+        return new_x1, new_y1, new_x2, new_y2
 
 class BandDetectionStrategy:
     def __init__(self, image, central_line, config,hkl):
@@ -96,6 +162,68 @@ class RectangularAreaBandDetector:
         self.hkl = hkl
         self.debug = config.get('debug', False)
 
+
+    def _trim_line_to_image_bounds(self, x1, y1, x2, y2):
+        """
+        Trim the central line coordinates (x1, y1, x2, y2) to ensure they stay within the image bounds,
+        maintaining the slope of the line.
+
+        :param x1, y1, x2, y2: Coordinates of the central line.
+        :return: Trimmed coordinates that are inside the image bounds.
+        """
+        image_height, image_width = self.image.shape
+
+        # Calculate the slope of the line
+        if x2 != x1:
+            slope = (y2 - y1) / (x2 - x1)
+        else:
+            slope = float('inf')  # Infinite slope, vertical line
+
+        # Find the intersection points of the line with the image boundary
+        new_x1, new_y1 = self._clip_line_to_bounds(x1, y1, slope, image_width, image_height)
+        new_x2, new_y2 = self._clip_line_to_bounds(x2, y2, slope, image_width, image_height)
+
+        # Assertion to ensure the trimmed coordinates are within the image bounds
+        assert 0 <= new_x1 < image_width and 0 <= new_y1 < image_height, "Trimmed x1, y1 are out of bounds."
+        assert 0 <= new_x2 < image_width and 0 <= new_y2 < image_height, "Trimmed x2, y2 are out of bounds."
+
+        return new_x1, new_y1, new_x2, new_y2
+
+    def _clip_line_to_bounds(self, x, y, slope, image_width, image_height):
+        """
+        Clip a point (x, y) on the line to ensure it stays within the image bounds.
+
+        :param x, y: Point coordinates to be clipped.
+        :param slope: Slope of the line.
+        :param image_width: Width of the image.
+        :param image_height: Height of the image.
+        :return: Trimmed coordinates (new_x, new_y) that lie within the image bounds.
+        """
+        if x < 0:  # Clip to the left boundary (x = 0)
+            new_x = 0
+            new_y = y + slope * (new_x - x)
+        elif x > image_width - 1:  # Clip to the right boundary (x = image_width - 1)
+            new_x = image_width - 1
+            new_y = y + slope * (new_x - x)
+        else:
+            new_x = x
+            new_y = y
+
+        if new_y < 0:  # Clip to the top boundary (y = 0)
+            new_y = 0
+            if slope != float('inf'):
+                new_x = x + (new_y - y) / slope
+        elif new_y > image_height - 1:  # Clip to the bottom boundary (y = image_height - 1)
+            new_y = image_height - 1
+            if slope != float('inf'):
+                new_x = x + (new_y - y) / slope
+
+        # Ensure the new point stays within bounds
+        new_x = np.clip(new_x, 0, image_width - 1)
+        new_y = np.clip(new_y, 0, image_height - 1)
+
+        return new_x, new_y
+
     def detect(self):
         """
         Detect the band using intensity profile in a rectangular area around the band.
@@ -104,6 +232,10 @@ class RectangularAreaBandDetector:
         """
         # Extract the rectangular region and sample the intensities
         x1, y1, x2, y2 = self.central_line
+        trimmer = LineTrimmer(self.image.shape[0], self.image.shape[1])
+        #x1, y1, x2, y2 = self._trim_line_to_image_bounds(x1, y1, x2, y2)
+        x1, y1, x2, y2 = trimmer._trim_line_to_circle(x1, y1, x2, y2)
+        self.central_line = [x1, y1, x2, y2]
         rect_width = self.config.get('rectWidth', 20)  # Width of the rectangle
         logging.info(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)

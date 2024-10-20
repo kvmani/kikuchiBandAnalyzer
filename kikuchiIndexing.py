@@ -13,6 +13,8 @@ from hyperspy.utils.markers import line_segment, point, text
 import pandas as pd
 from collections import defaultdict
 import json
+from kikuchiBandWidthDetector import process_kikuchi_images
+
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
 KikuchiPatternSimulator = kp.simulations.KikuchiPatternSimulator
@@ -64,7 +66,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         grouped_data = self._group_by_ind(data)
 
         # Return grouped JSON as a string
-        return json.dumps(grouped_data, indent=4)
+        return json.dumps(grouped_data, indent=4), grouped_data
 
 
     @staticmethod
@@ -108,7 +110,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         # Labels for Kikuchi lines can be based on reflectors (e.g., hkl values)
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
-        texts = re.sub("[][ ]", "", array_str).split("\n")
+        texts = re.sub("[][ ]", " ", array_str).split("\n")
 
         kw = {
             "color": "b",
@@ -118,9 +120,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
             "bbox": {"fc": "w", "ec": "b", "boxstyle": "round,pad=0.3"},
         }
         kw.update(kwargs)
-
         kikuchi_line_label_list = []
-
         # Initialize a 2D list to store dictionaries at each (row, col) position
         rows, cols, n, _ = coords.shape
         num_cols = cols
@@ -161,7 +161,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     # Prepare the data for valid points
                     num_valid = row_indices.size
                     kikuchi_data = {
-                        "hkl": texts[i],
+                        "hkl": texts[i].strip(),
+                        #"hkl_value":reflectors[i],
                         "central_line": np.vstack(
                             [x1[valid_mask], y1[valid_mask], x2[valid_mask], y2[valid_mask]]).T.tolist(),
                         "line_mid_xy": np.vstack([x[valid_mask], y[valid_mask]]).T.tolist(),  # Midpoint coordinates
@@ -177,6 +178,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                                 "(x,y)":(row,col),
                                 "ind": (row * num_cols) + col,
                                 "hkl": kikuchi_data["hkl"],
+                                #"hkl_value": kikuchi_data["hkl_value"],
                                 "central_line": kikuchi_data["central_line"][idx],
                                 "line_mid_xy": kikuchi_data["line_mid_xy"][idx],
                                 "line_dist": kikuchi_data["line_dist"][idx]
@@ -191,7 +193,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     flat_kikuchi_line_dict_list.extend(entry)
 
         df = pd.DataFrame(flat_kikuchi_line_dict_list)
-        final_json_str = self._df_to_grouped_json(df)
+        final_json_str, grouped_kikuchi_dict_list = self._df_to_grouped_json(df)
+
         cleaned_json_str = CustomGeometricalKikuchiPatternSimulation.remove_newlines_from_fields(final_json_str)
         # Dump the final JSON string to disk
         with open("kikuchi_lines.json", "w") as f:
@@ -204,7 +207,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         # Save as Excel
         df.to_excel("kikuchi_lines.xlsx", index=False, engine="openpyxl")
 
-        return kikuchi_line_label_list, kikuchi_line_dict_list
+        return kikuchi_line_label_list, grouped_kikuchi_dict_list
 
     def as_markers(
             self,
@@ -234,11 +237,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         if kikuchi_line_labels:
             if kikuchi_line_labels_kwargs is None:
                 kikuchi_line_labels_kwargs = {}
-            markersTmp,  kikuchi_line_dict_list = self._kikuchi_line_labels_as_markers(**kikuchi_line_labels_kwargs)
+            markersTmp,  grouped_kikuchi_dict_list = self._kikuchi_line_labels_as_markers(**kikuchi_line_labels_kwargs)
             markers+=markersTmp
 
 
-        return markers, kikuchi_line_dict_list
+        return markers, grouped_kikuchi_dict_list
 
 
 # Main function for testing the custom class
@@ -292,6 +295,7 @@ def main():
 
     # Load the dataset and preprocess
     s = kp.load(data_path, lazy=True)
+    s = s.remove_dynamic_background(inplace=False)
     s.crop(1, start=10, end=15)
 
     # Detector setup and pattern extraction
@@ -300,7 +304,9 @@ def main():
 
     # PhaseList and indexing
     indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
-    xmap = s.hough_indexing(phase_list=phase_list, indexer=indexer, verbose=1)
+    xmap,index_data, indexed_band_data = s.hough_indexing(phase_list=phase_list, indexer=indexer,
+                                        return_index_data=True, return_band_data=True,
+                                        verbose=1)
 
     # Use the CustomKikuchiPatternSimulator for geometrical simulations
     ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list)
@@ -309,8 +315,18 @@ def main():
     sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
 
     # Add markers (including zone axis labels) to the signal
-    markers, kikuchi_line_dict_list = sim.as_markers(kikuchi_line_labels=True, zone_axes_labels=True)
+    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, zone_axes_labels=False)
     s.add_marker(markers, plot_marker=False, permanent=True)
+
+    ### Call process_kikuchi_images for each pixel's image data and kikuchi_line_dict_list ###
+    ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
+
+    # Call process_kikuchi_images with the EBSD dataset and the band detection configuration
+    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
+
+    # Optionally save or visualize the results
+    # save_results_to_json(processed_results, "bandOutputData.json")
+    # save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
     # RGB navigator (optional visualization)
     v_ipf = Vector3d.xvector()
@@ -320,6 +336,7 @@ def main():
     maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
     s.plot(maps_nav_rgb)
     plt.show()
+
 
 if __name__ == "__main__":
     main()

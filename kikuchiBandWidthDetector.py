@@ -3,60 +3,73 @@ import json
 import cv2
 import numpy as np
 import yaml
-from strategies import GradientBandDetector, GaussianBandDetector, RectangularAreaBandDetector
+from strategies import RectangularAreaBandDetector
 import pandas as pd
+import dask.array as da
 # Set up logging
 logging.basicConfig(filename="bandDetector.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def load_config(config_path="bandDetectorOptions.yml"):
-    """
-    Loads configuration from a YAML file.
-    :param config_path: Path to the YAML configuration file.
-    :return: Dictionary with configuration parameters.
-    """
-    with open(config_path, 'r') as file:
-        config = yaml.safe_load(file)
-    return config
-
-
-def load_json(json_path="bandInputData.json"):
-    """
-    Loads band data from a JSON file.
-    :param json_path: Path to the JSON input file.
-    :return: List of dictionaries with band data.
-    """
-    with open(json_path, 'r') as file:
-        data = json.load(file)
-    return data
-
-
 class BandDetector:
-    def __init__(self, image_path, points, strategy):
+    def __init__(self, image=None, image_path=None, points=None, config=None):
         """
         Initializes the band detector for multiple bands in an image.
 
-        :param image_path: Path to the input image.
-        :param points: List of dictionaries with "hkl", "central_line", and "refWidth" for each band.
-        :param strategy: Strategy string ('gradient', 'gaussian', 'rectangular_area') to choose the detection strategy.
+        :param image: Kikuchi image (2D numpy array). If provided, image_path is ignored.
+        :param image_path: Path to the input image. If image is not provided, image is loaded from this path.
+        :param points: List of dictionaries with "hkl", "central_line", "line_mid_xy", and "line_dist" for each band.
+        :param config: Configuration dictionary. If None, load from default YAML.
         """
-        self.image_path = image_path
+        if image is not None:
+            # Convert Dask array to NumPy array if necessary
+            if isinstance(image, da.Array):
+                self.image = image.compute()  # Convert Dask array to NumPy array
+
+            else:
+                self.image = self._ensure_grayscale(image)
+        elif image_path is not None:
+            self.image = self._load_image(image_path)
+        else:
+            raise ValueError("Either an image array or an image path must be provided.")
+
         self.points = points  # Multiple bands data
-        self.strategy = strategy
-        self.image = self.load_image()
-        self.config = load_config()
+        self.config = config if config else self._load_config()
 
-    def load_image(self):
+    def _ensure_grayscale(self, image):
         """
-        Loads an image from the given path and converts it to grayscale.
-
+        Ensures the image is in grayscale. Converts to grayscale if it's a color image.
+        :param image: Input image (numpy array).
         :return: Grayscale image.
         """
-        image = cv2.imread(self.image_path)
-        if len(image.shape) == 3:  # Check if the image is not grayscale
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        logging.info(f"Image loaded from {self.image_path}.")
-        return image
+        if len(image.shape) == 3 and image.shape[2] == 3:  # Color image (RGB/BGR)
+            logging.info("Converting provided image to grayscale.")
+            return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        elif len(image.shape) == 2:  # Already grayscale
+            return image
+        else:
+            raise ValueError("Provided image must be either 2D grayscale or 3D RGB/BGR.")
+
+    def _load_image(self, image_path):
+        """
+        Loads an image from the given path and converts it to grayscale.
+        :param image_path: Path to the input image.
+        :return: Grayscale image.
+        """
+        image = cv2.imread(image_path)
+        if image is None:
+            raise ValueError(f"Could not load image from path: {image_path}")
+        logging.info(f"Image loaded from {image_path}.")
+        return self._ensure_grayscale(image)
+
+    def _load_config(self, config_path="bandDetectorOptions.yml"):
+        """
+        Loads configuration from a YAML file.
+        :param config_path: Path to the YAML configuration file.
+        :return: Dictionary with configuration parameters.
+        """
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+        return config
 
     def detect_bands(self):
         """
@@ -67,101 +80,63 @@ class BandDetector:
         for point in self.points:
             hkl = point["hkl"]  # Extract hkl value from JSON
             central_line = point["central_line"]
-            ref_width = point["refWidth"]
+            line_mid_xy = point["line_mid_xy"]
+            line_dist = point["line_dist"]
 
-            # Detect the band, pass the hkl directly to the detector
-            result = self.detect_band(central_line, hkl)
+            # Detect the band, using RectangularAreaBandDetector
+            result = self._detect_band(central_line, hkl)
             result["hkl"] = hkl  # Add hkl label to the result
-            result["refWidth"] = ref_width  # Add reference width
+            result["line_mid_xy"] = line_mid_xy  # Add line midpoint
+            result["line_dist"] = line_dist  # Add line distance
 
             results.append(result)
         return results
 
-    def detect_band(self, central_line, hkl):
+    def _detect_band(self, central_line, hkl):
         """
-        Detect a single band using the strategy and central line.
+        Detect a single band using RectangularAreaBandDetector and central line.
         :param central_line: Central line of the band.
         :param hkl: Miller indices of the band.
         :return: A dictionary with detection results.
         """
-        if self.strategy == 'gradient':
-            detector = GradientBandDetector(self.image, central_line, self.config, hkl)
-        elif self.strategy == 'gaussian':
-            detector = GaussianBandDetector(self.image, central_line, self.config, hkl)
-        elif self.strategy == 'rectangular_area':
-            detector = RectangularAreaBandDetector(self.image, central_line, self.config, hkl)
-        else:
-            raise ValueError(f"Unknown strategy: {self.strategy}")
-
+        detector = RectangularAreaBandDetector(self.image, central_line, self.config, hkl)
         return detector.detect()
 
-    # def detect_bands(self):
-    #     """
-    #     Detects the bands for each point in the `points` list.
-    #
-    #     :return: A list of dictionaries with detection results for each band.
-    #     """
-    #     results = []
-    #
-    #     for point in self.points:
-    #         hkl = point["hkl"]
-    #         central_line = point["central_line"]
-    #         ref_width = point["refWidth"]
-    #
-    #         result = self.detect_band(central_line, hkl)
-    #         result["hkl"] = hkl  # Add hkl label to the result
-    #         result["refWidth"] = ref_width
-    #
-    #         # Choose the strategy and detect the band
-    #         if self.strategy == 'gradient':
-    #             detector = GradientBandDetector(self.image, central_line, self.config,self.hkl)
-    #         elif self.strategy == 'gaussian':
-    #             detector = GaussianBandDetector(self.image, central_line, self.config,self.hkl)
-    #         elif self.strategy == 'rectangular_area':
-    #             detector = RectangularAreaBandDetector(self.image, central_line, self.config,self.hkl)
-    #         else:
-    #             raise ValueError(f"Unknown strategy: {self.strategy}")
-    #
-    #         result = detector.detect()
-    #         result["hkl"] = hkl  # Add hkl label to the result
-    #         result["central_line"] = central_line  # Add central line for reference
-    #         result["refWidth"] = ref_width  # Add reference width
-    #
-    #         # Store each band's result
-    #         results.append(result)
-    #
-    #         logging.info(f"Band detection for {hkl} completed using {self.strategy} strategy.")
-    #
-    #     return results
 
-
-def process_images(json_input):
+def process_kikuchi_images(ebsd_data, json_input, config=None):
     """
-    Processes multiple images and their corresponding bands.
+    Processes multiple Kikuchi images (in memory) and their corresponding bands for each pixel in the EBSD dataset.
 
-    :param json_input: List of dictionaries with image data and band points.
-    :return: Updated list of dictionaries with band detection results.
+    :param ebsd_data: 2D numpy array (m x n) where each entry is a Kikuchi pattern (2D numpy array).
+    :param json_input: List of dictionaries with band points.
+    :param config: Configuration dictionary, optional. If None, default configuration will be loaded.
+    :return: Updated list of dictionaries with band detection results for each pixel.
     """
     processed_data = []
 
-    for entry in json_input:
-        image_path = entry["patternFileName"]
-        points = entry["points"]
+    # Iterate over each pixel in the EBSD dataset
+    for row in range(ebsd_data.shape[0]):
+        for col in range(ebsd_data.shape[1]):
+            image = ebsd_data[row, col]  # Get Kikuchi image at the current pixel
 
-        # Load strategy from config
-        config = load_config()
-        strategy = config.get("strategy", "gradient")
+            # Process corresponding JSON entry (assuming one-to-one mapping of json_input to images)
+            for entry in json_input:
+                points = entry["points"]
 
-        # Initialize BandDetector for the current image
-        band_detector = BandDetector(image_path, points, strategy)
-        results = band_detector.detect_bands()
+                # Initialize BandDetector for the current image and pixel
+                band_detector = BandDetector(image=image, points=points, config=config)
+                results = band_detector.detect_bands()
 
-        # Add results to the processed entry
-        entry["bands"] = results
+                # Add results to the processed entry
+                processed_entry = entry.copy()  # Copy the original entry to avoid overwriting
+                processed_entry["bands"] = results
+                processed_entry["x,y"] = [row, col]  # Update x,y with the current pixel coordinates
 
-        processed_data.append(entry)
+                processed_data.append(processed_entry)
 
     return processed_data
+
+
 def convert_results(results):
     if isinstance(results, dict):
         return {key: convert_results(value) for key, value in results.items()}
@@ -176,10 +151,10 @@ def convert_results(results):
     else:
         return results
 
+
 def save_results_to_json(results, output_path="bandOutputData.json"):
     """
     Saves the processed results to a JSON file.
-
     :param results: List of dictionaries with processed band data.
     :param output_path: Path to save the JSON output file.
     """
@@ -187,16 +162,13 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
 
     with open(output_path, 'w') as file:
         json.dump(results_serializable, file, indent=4)
-        # json.dump(results, file, indent=4,)
     logging.info(f"Results saved to {output_path}.")
     print(output_path)
-
 
 
 def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
     """
     Saves the processed results to an Excel (.xlsx) file.
-
     :param results: List of dictionaries with processed band data.
     :param output_path: Path to save the Excel output file.
     """
@@ -204,30 +176,25 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
     data = []
 
     for result in results:
-        grain_id = result.get("grainId")
-        grain_xy = result.get("grain_xy")
-        pattern_file_name = result.get("patternFileName")
-        lrs_value = result.get("LRS_value")
-        comment = result.get("comment")
+        xy = result.get("x,y")
+        ind = result.get("ind")
         for band in result["bands"]:
             hkl = band.get("hkl")
             central_line = band.get("central_line")
-            ref_width = band.get("refWidth")
+            line_mid_xy = band.get("line_mid_xy")
+            line_dist = band.get("line_dist")
             band_width = band.get("bandWidth", None)  # Band width from detection
             central_peak = band.get("centralPeak", None)  # Central peak from detection
             success = band.get("success", False)  # Detection success
 
             # Append the row to data
             data.append({
-                "Grain ID": grain_id,
-                "Grain XY": grain_xy,
-
-                "Pattern File": pattern_file_name,
-                "LRS Value": lrs_value,
-                "Comment": comment,
+                "X,Y": xy,
+                "Ind": ind,
                 "hkl": hkl,
                 "Central Line": central_line,
-                "Reference Width": ref_width,
+                "Line Mid XY": line_mid_xy,
+                "Line Distance": line_dist,
                 "Band Width": band_width,
                 "Central Peak": central_peak,
                 "Success": success
@@ -243,15 +210,14 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
 
 
 if __name__ == "__main__":
-    # Load input from JSON
-    json_input = load_json("bandInputData.json")
+    # Example EBSD data (2D array of Kikuchi images)
+    # ebsd_data = np.random.rand(10, 10, 128, 128)  # Example 10x10 grid of Kikuchi images of size 128x128
 
-    # Process each image and its bands
-    processed_results = process_images(json_input)
-    # Assuming 'processed_results' is the list of dictionaries with band detection results
-    # Assuming 'processed_results' is the list of dictionaries with band detection results
+    # Load input from JSON (new structure with "x,y", "ind", "points")
+    #json_input = load_json("bandInputData.json")
+
+    # Process the EBSD data and corresponding bands
+    processed_results = process_kikuchi_images(ebsd_data, json_input)
+
+    # Save the results to Excel and JSON
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
-    save_results_to_json(processed_results)
-
-
-
