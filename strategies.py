@@ -90,63 +90,6 @@ class BandDetectionStrategy:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
-
-class GradientBandDetector(BandDetectionStrategy):
-    def detect(self):
-        """
-        Detect the band using gradient-based method.
-        :return: Dictionary with bandWidth, perpendicularLine, success status.
-        """
-        # Get the midpoint of the central line
-        x1, y1, x2, y2 = self.central_line
-        mid_x, mid_y = (x1 + x2) // 2, (y1 + y2) // 2
-
-        # Construct perpendicular line
-        perp_len = self.config.get("perpendicular_line_length", 20)
-        perpendicular_line = [(mid_x, mid_y - perp_len // 2), (mid_x, mid_y + perp_len // 2)]
-
-        # Sample the line profile
-        line_profile = cv2.line(self.image, perpendicular_line[0], perpendicular_line[1], (255, 0, 0))
-
-        # Smooth the line profile
-        smoothed_profile = gaussian_filter1d(line_profile, sigma=self.config.get("smoothing_sigma", 2))
-
-        # Detect the start and end of the band using gradient threshold
-        gradient_threshold = self.config.get("gradient_threshold", 10)
-        # Implement the gradient detection logic...
-
-        # Return results in the expected dictionary format
-        result = {
-            "bandWidth": None,  # Replace with actual width calculation
-            "perpendicularLine": perpendicular_line,
-            "success": False  # Set to True after finding the band
-        }
-        return result
-
-
-class GaussianBandDetector(BandDetectionStrategy):
-    def detect(self):
-        """
-        Detect the band using Gaussian curve fitting.
-        :return: Dictionary with bandWidth, perpendicularLine, success status, and fitted Gaussian curve.
-        """
-
-        # Fit a Gaussian curve to the intensity profile
-        def gaussian(x, amp, mean, stddev):
-            return amp * np.exp(-((x - mean) ** 2) / (2 * stddev ** 2))
-
-        # Assume we have the intensity profile...
-        # Fit the curve...
-
-        result = {
-            "bandWidth": None,  # Replace with actual width calculation
-            "perpendicularLine": None,
-            "success": False,  # Set to True after fitting successfully
-            "fitted_gaussian": None  # Return the fitted Gaussian curve for plotting
-        }
-        return result
-
-
 class RectangularAreaBandDetector:
     def __init__(self, image, central_line, config,hkl):
         """
@@ -161,6 +104,8 @@ class RectangularAreaBandDetector:
         self.config = config
         self.hkl = hkl
         self.debug = config.get('debug', False)
+        self.psnr = 0
+        self.band_valid=False
 
 
     def _trim_line_to_image_bounds(self, x1, y1, x2, y2):
@@ -238,6 +183,7 @@ class RectangularAreaBandDetector:
         self.central_line = [x1, y1, x2, y2]
         rect_width = self.config.get('rectWidth', 20)  # Width of the rectangle
         logging.info(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
+        #avg_rect_intensity, avg_img_intensity = self.extract_rotated_rectangle_properties(x1, y1, x2, y2, rect_width, plotResults=True)
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)
         summed_profile = np.sum(self.sample_intensities(rect_area), axis=0)
 
@@ -245,31 +191,112 @@ class RectangularAreaBandDetector:
         # band_start, band_end, central_peak = self.detect_edges(summed_profile)
         result = self.detect_edges(summed_profile)
         result["central_line"]=self.central_line
-        band_start, band_end, central_peak,psnr=result["bandStart"],result["bandEnd"],result["centralPeak"],result["psnr"]
+        band_start, band_end, central_peak,psnr,band_valid=result["bandStart"],result["bandEnd"],result["centralPeak"],result["psnr"], result["band_valid"]
 
-        if band_start is not None and band_end is not None:
+        if band_start is not None and band_end is not None and band_valid:
             # Calculate the band width and adjust for the scaling factor
             raw_band_width = band_end - band_start
             self.band_width = raw_band_width / self.scaling_factor  # Adjust band width based on the scaling factor
-            success = True
-            logging.info(f"Band width detected: {self.band_width}")
+            self.psnr=psnr
+            if self.band_width <self.config["rectWidth"]*.8 and self.band_width>self.config["rectWidth"]*.1:
+
+                band_valid = True
+                self.band_valid=True
+                logging.debug(f"Band width detected: {self.band_width}")
+            else:
+                band_valid = False
+                self.band_valid=False
         else:
-            self.band_width = None
-            success = False
+            self.band_width = 0
+            self.band_valid = False
             logging.info("Band width detection failed.")
         if self.debug:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
 
+        # self.band_valid=band_valid
+        # self.psnr=psnr
+
         final_result = {
+            **result,  # Merging result with psnr
             "bandWidth": self.band_width,
-            "success": success,
-            **result  # Merging result with psnr
+            "band_valid": band_valid,
+            "psnr":self.psnr
         }
 
-        print(f"Final result: {final_result}")  # Add this for debugging
+
 
         return final_result
+
+
+
+    def extract_rotated_rectangle_properties(self, x1, y1, x2, y2, band_width, plotResults=False):
+        """
+        Extract a narrow band (thick line) around the central line (x1, y1) to (x2, y2) of the specified width.
+        Handles cases where part of the band exceeds the image boundary by filling those regions with zeros.
+        Also computes the average pixel intensity inside the band and the entire image average using a circular mask.
+
+        :param x1, y1, x2, y2: Coordinates of the central line.
+        :param band_width: Width of the band around the central line.
+        :param plotResults: If True, plot intermediate results for debugging.
+        :return: (avg_band_intensity, avg_img_intensity)
+        """
+
+        # Create a blank mask the same size as the image
+        mask = np.zeros_like(self.image, dtype=np.uint8)
+
+        # Draw a thick line on the mask to represent the band
+        cv2.line(mask, (int(x1), int(y1)), (int(x2), int(y2)), 255, thickness=int(band_width/2))
+
+        # Ensure the mask has the same number of channels as the image (if the image is multi-channel)
+        # if len(self.image.shape) == 3 and self.image.shape[2] > 1:
+        #     mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+        # Extract the region inside the band by applying the mask to the image
+        band_region = cv2.bitwise_and(self.image, self.image, mask=mask)
+
+        # Calculate the average intensity inside the band
+        avg_band_intensity = np.sum(band_region) / (np.sum(mask > 0) + 1e-5)  # Avoid division by zero
+
+        # Create a circular mask for the entire image (biggest possible circle)
+        center = (self.image.shape[1] // 2, self.image.shape[0] // 2)
+        radius = min(center)
+        circular_mask = np.zeros_like(self.image, dtype=np.uint8)
+        cv2.circle(circular_mask, center, radius, 255, -1)
+
+        # Apply the circular mask to the image
+        masked_image = cv2.bitwise_and(self.image, self.image, mask=circular_mask)
+
+        # Calculate the average intensity of the circularly masked image
+        avg_img_intensity = np.sum(masked_image) / (np.sum(circular_mask > 0) + 1e-5)
+
+        # Plot results if plotResults is True
+        if plotResults:
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+            # Original Image with Central Line
+            axes[0].imshow(self.image, cmap='gray')
+            axes[0].set_title('Original Image with Central Line')
+            axes[0].plot([x1, x2], [y1, y2], 'r-', label='Central Line')
+
+            # Masked Band Region
+            axes[1].imshow(band_region, cmap='gray')
+            axes[1].set_title('Extracted Band Region (Masked)')
+
+            # Circular Mask Applied to Original Image
+            masked_overlay = np.copy(self.image)
+            masked_overlay[circular_mask == 0] = 0
+            axes[2].imshow(masked_overlay, cmap='gray')
+            axes[2].set_title(f'Image with Circular Mask\n'
+                              f'{avg_band_intensity=}\n'
+                              f'{avg_img_intensity}')
+            circle = plt.Circle(center, radius, color='blue', fill=False)
+            axes[2].add_patch(circle)
+
+            plt.tight_layout()
+            plt.show()
+
+        return avg_band_intensity, avg_img_intensity
 
     def extract_rotated_rectangle(self, x1, y1, x2, y2, rect_width):
         """
@@ -380,6 +407,7 @@ class RectangularAreaBandDetector:
         :return: Indices of the band start (left_min), band end (right_min), central peak, and PSNR value.
         """
         # Step 1: Smooth the profile to reduce noise
+        band_valid=False
         smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
 
         # Step 2: Find the maximum (central peak) in the smoothed profile
@@ -401,8 +429,14 @@ class RectangularAreaBandDetector:
         # Step 6: Calculate PSNR (Peak Max divided by the average of left and right minima)
         if noise_average != 0:
             psnr_value = peak_max / noise_average
+            if psnr_value>self.config["min_psnr"]:
+                band_valid=True
         else:
-            psnr_value = np.inf  # Handle case where noise is zero to avoid division by zero
+            psnr_value = 0  # Handle case where noise is zero to avoid division by zero
+
+        if left_min_index==0 or right_min_index==smoothed_profile.size:
+            band_valid = False
+            #print("index is either first or last of array!!!")
 
         logging.info(
             f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
@@ -410,10 +444,13 @@ class RectangularAreaBandDetector:
 
         # Step 7: Return the results in the dictionary
         return {
+            "band_peak":peak_max,
+            "band_bkg":noise_average,
             "bandStart": left_min_index,
             "bandEnd": right_min_index,
             "centralPeak": central_peak_index,
-            "psnr": psnr_value  # Include PSNR in the results dictionary
+            "psnr": psnr_value,  # Include PSNR in the results dictionary
+            "band_valid": band_valid
         }
 
     def plot_debug(self, rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end, central_peak):
@@ -530,7 +567,9 @@ class RectangularAreaBandDetector:
 
         # ax[1, 1].set_title(f"Summed Intensity Profile\n BandWidth={self.band_width} ")
 
-        ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\nBandWidth={self.band_width}")
+        ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\n"
+                           f"BandWidth={self.band_width} \n PSNR={self.psnr}\n "
+                           f"valid?{self.band_valid}")
 
         ax[1, 1].legend()
 

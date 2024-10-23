@@ -1,3 +1,4 @@
+import warnings
 
 import matplotlib.pyplot as plt
 import kikuchipy as kp
@@ -14,6 +15,7 @@ import pandas as pd
 from collections import defaultdict
 import json
 from kikuchiBandWidthDetector import process_kikuchi_images
+from kikuchiBandWidthDetector import save_results_to_excel
 
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
@@ -47,6 +49,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
             # Append the current point's details to the "points" list
             grouped_data[ind]["points"].append({
                 "hkl": entry["hkl"],
+                "hkl_group": entry["hkl_group"],
                 "central_line": entry["central_line"],
                 "line_mid_xy": entry["line_mid_xy"],
                 "line_dist": entry["line_dist"]
@@ -111,6 +114,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
         texts = re.sub("[][ ]", " ", array_str).split("\n")
+        #refelctorGroup  = [''.join(map(str, [abs(i.h), abs(i.k), abs(i.l)])) for i in reflectors]
+        refelctorGroup = [''.join(map(str, sorted(map(abs, row)))) for row in reflectors]
 
         kw = {
             "color": "b",
@@ -162,6 +167,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     num_valid = row_indices.size
                     kikuchi_data = {
                         "hkl": texts[i].strip(),
+                        "hkl_group":refelctorGroup[i],
                         #"hkl_value":reflectors[i],
                         "central_line": np.vstack(
                             [x1[valid_mask], y1[valid_mask], x2[valid_mask], y2[valid_mask]]).T.tolist(),
@@ -178,7 +184,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                                 "(x,y)":(row,col),
                                 "ind": (row * num_cols) + col,
                                 "hkl": kikuchi_data["hkl"],
-                                #"hkl_value": kikuchi_data["hkl_value"],
+                                "hkl_group":kikuchi_data["hkl_group"],
                                 "central_line": kikuchi_data["central_line"][idx],
                                 "line_mid_xy": kikuchi_data["line_mid_xy"][idx],
                                 "line_dist": kikuchi_data["line_dist"][idx]
@@ -291,12 +297,30 @@ def main():
             ),
         )
         hkl_list = [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]  # Example HKL list for the other material
+        ### change this for making it bad
         pc = [0.54728, 0.7169, 0.6969]
+        #pc = [0.1, 0.7169, 0.6969]
 
     # Load the dataset and preprocess
-    s = kp.load(data_path, lazy=True)
-    s = s.remove_dynamic_background(inplace=False)
-    s.crop(1, start=10, end=15)
+    s = kp.load(data_path, lazy=False)
+    #s = s.remove_dynamic_background(inplace=False)
+    # s.crop(1, start=25, end=35)
+    # s.crop(0,start=35,end=40)
+    # warnings.warn(
+    #     "dont forget to remove the following line after end of debugging as currently all patters are being over written")
+
+    if 0:
+        sim_image = np.load('simulated_kikuchi.npy')
+        s.data[0][0]=sim_image
+        s.data[3, 5]=sim_image
+         #s.data[:]=s.data[3][5]
+
+
+    else:
+        np.save('real_kikuchi.npy',s.data[0][0])
+    # plt.imshow(s.data[0][0])
+    # plt.show()
+    #s.data[:] = s.data[3, 5][None, None, :, :]
 
     # Detector setup and pattern extraction
     sig_shape = s.axes_manager.signal_shape[::-1]
@@ -322,7 +346,9 @@ def main():
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
 
     # Call process_kikuchi_images with the EBSD dataset and the band detection configuration
-    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
+    ### this is the code which calls the main band width estimator
+    #processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
+    #save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
     # Optionally save or visualize the results
     # save_results_to_json(processed_results, "bandOutputData.json")

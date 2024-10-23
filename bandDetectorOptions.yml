@@ -2,6 +2,8 @@ gradient_threshold: 50
 perpendicular_line_length: 40
 smoothing_sigma: 2
 strategy: "rectangular_area"
-debug: true
+debug: false
 rectWidth: 50
+min_psnr: 1.1
+
 ### sggsgsh;gohs
