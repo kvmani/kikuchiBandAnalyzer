@@ -3,6 +3,8 @@ import json
 import cv2
 import numpy as np
 import yaml
+from tqdm import tqdm
+
 from strategies import RectangularAreaBandDetector
 import pandas as pd
 import dask.array as da
@@ -118,7 +120,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
 
     # Iterate over each pixel in the EBSD dataset
     ncol = ebsd_data.shape[1]
-    for row in range(ebsd_data.shape[0]):
+    for row in tqdm(range(ebsd_data.shape[0]), desc="Processing rows"):
         for col in range(ebsd_data.shape[1]):
             image = ebsd_data[row, col]  # Get Kikuchi image at the current pixel
 
@@ -130,12 +132,12 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
                 try:
                     results = band_detector.detect_bands()
                 except Exception as e:
-                    print(f"pattern: [{row}{col}] An error occurred while detecting bands: {e}")
-                    results = []  # You can also set a default value or take other appropriate actions
+                    print(f"pattern: [{row} : {col}] An error occurred while detecting bands: {e}")
+                    #results = []  # You can also set a default value or take other appropriate actions
                     logging.warning(f"exception in pattern id : [{row}{col}] did not have any identifed bands !!!")
                 #results = band_detector.detect_bands()
-                if len(results)==0:
-                    logging.warning(f"pattern id : [{row}{col}] did not have any identifed bands !!!")
+                # if len(results)==0:
+                #     logging.warning(f"pattern id : [{row}{col}] did not have any identifed bands !!!")
                 # Add results to the processed entry
                 processed_entry = entry.copy()  # Copy the original entry to avoid overwriting
                 processed_entry["bands"] = results
@@ -143,6 +145,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
                 processed_entry["ind"] = row*ncol+col
 
                 processed_data.append(processed_entry)
+    print(f"conpleted kicuchi band width estimation for all patterns!!!")
 
 
     return processed_data

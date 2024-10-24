@@ -106,7 +106,12 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
 
         return json_str
 
-    def _kikuchi_line_labels_as_markers(self, **kwargs) -> list:
+    @staticmethod
+    def get_hkl_group(hkl_str):
+        # Split string into integers, apply abs, sort, convert back to string without spaces
+        hkl_values = sorted(map(abs, map(int, hkl_str.split())))
+        return ''.join(map(str, hkl_values))
+    def _kikuchi_line_labels_as_markers(self, desired_hkl='111', **kwargs) -> list:
         """Return a list of Kikuchi line label text markers."""
         coords = self.lines_coordinates(index=(), exclude_nan=False)
 
@@ -114,6 +119,9 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
         texts = re.sub("[][ ]", " ", array_str).split("\n")
+
+        filtered_texts = np.array([text if self.get_hkl_group(text) == desired_hkl else '' for text in texts])
+
         #refelctorGroup  = [''.join(map(str, [abs(i.h), abs(i.k), abs(i.l)])) for i in reflectors]
         refelctorGroup = [''.join(map(str, sorted(map(abs, row)))) for row in reflectors]
 
@@ -130,13 +138,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         rows, cols, n, _ = coords.shape
         num_cols = cols
         kikuchi_line_dict_list = [[[] for _ in range(cols)] for _ in range(rows)]
-
         is_finite = np.isfinite(coords)[..., 0]
         coords[~is_finite] = -1
         det_bounds = self.detector.shape
         det_mid_point=0.5*det_bounds[0],0.5*det_bounds[1]
         dist_threshold = 0.75*0.5*det_bounds[0] ## 75% of radius of the detector
-
         for i in range(reflectors.shape[0]):
             if not np.allclose(coords[..., i, :], -1):  # Check for all NaNs
                 x1 = coords[..., i, 0]
@@ -154,12 +160,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 y = y.squeeze()
 
                 # Create a text marker with the label for each Kikuchi line
-                text_marker = text(x=x, y=y, text=texts[i], **kw)
+                text_marker = text(x=x, y=y, text=filtered_texts[i], **kw)
                 kikuchi_line_label_list.append(text_marker)
 
                 # Vectorized approach to fill kikuchi_line_dict_list
                 valid_mask = is_finite[..., i]  # Get the mask of finite values
-
                 if np.any(valid_mask):  # Check if there are any valid points
                     # Create indices of valid points
                     row_indices, col_indices = np.where(valid_mask)
@@ -267,7 +272,7 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 # Use this CustomKikuchiPatternSimulator in the main method
 def main():
     choice = 'test_data'  # Variable to control which dataset and phase_list to load
-    choice = 'debarna_data'  # Variable to control which dataset and phase_list to load
+    #choice = 'debarna_data'  # Variable to control which dataset and phase_list to load
 
     # Load dataset based on choice
     if choice == 'test_data':
@@ -304,18 +309,16 @@ def main():
     # Load the dataset and preprocess
     s = kp.load(data_path, lazy=False)
     #s = s.remove_dynamic_background(inplace=False)
-    # s.crop(1, start=25, end=35)
-    # s.crop(0,start=35,end=40)
-    # warnings.warn(
-    #     "dont forget to remove the following line after end of debugging as currently all patters are being over written")
+    s.crop(1, start=5, end=25)
+    s.crop(0,start=5,end=25)
+    warnings.warn(
+        "dont forget to remove the following line after end of debugging as currently all patters are being over written")
 
     if 0:
         sim_image = np.load('simulated_kikuchi.npy')
         s.data[0][0]=sim_image
         s.data[3, 5]=sim_image
-         #s.data[:]=s.data[3][5]
-
-
+        #s.data[:]=s.data[3][5]
     else:
         np.save('real_kikuchi.npy',s.data[0][0])
     # plt.imshow(s.data[0][0])
@@ -347,8 +350,8 @@ def main():
 
     # Call process_kikuchi_images with the EBSD dataset and the band detection configuration
     ### this is the code which calls the main band width estimator
-    #processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
-    #save_results_to_excel(processed_results, "bandOutputData.xlsx")
+    # processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
+    # save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
     # Optionally save or visualize the results
     # save_results_to_json(processed_results, "bandOutputData.json")

@@ -412,31 +412,40 @@ class RectangularAreaBandDetector:
 
         # Step 2: Find the maximum (central peak) in the smoothed profile
         central_peak_index = np.argmax(smoothed_profile)
-        peak_max = smoothed_profile[central_peak_index]  # Peak maximum
+        peak_max=0
+        noise_average=0
+        psnr_value=0
+        left_min_index=0
+        right_min_index=0
+        #central_peak_index=0
 
-        # Step 3: Find the minimum on the left side of the central peak
-        left_min_index = np.argmin(smoothed_profile[:central_peak_index])  # Minimum before the peak
-        left_min = smoothed_profile[left_min_index]
+        if central_peak_index !=0 and central_peak_index!= smoothed_profile.size-1:
 
-        # Step 4: Find the minimum on the right side of the central peak
-        right_min_index = np.argmin(
-            smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
-        right_min = smoothed_profile[right_min_index]
+            peak_max = smoothed_profile[central_peak_index]  # Peak maximum
 
-        # Step 5: Calculate the average of the left and right minima
-        noise_average = (left_min + right_min) / 2
+            # Step 3: Find the minimum on the left side of the central peak
+            left_min_index = np.argmin(smoothed_profile[:central_peak_index])  # Minimum before the peak
+            left_min = smoothed_profile[left_min_index]
 
-        # Step 6: Calculate PSNR (Peak Max divided by the average of left and right minima)
-        if noise_average != 0:
-            psnr_value = peak_max / noise_average
-            if psnr_value>self.config["min_psnr"]:
-                band_valid=True
-        else:
-            psnr_value = 0  # Handle case where noise is zero to avoid division by zero
+            # Step 4: Find the minimum on the right side of the central peak
+            right_min_index = np.argmin(
+                smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
+            right_min = smoothed_profile[right_min_index]
 
-        if left_min_index==0 or right_min_index==smoothed_profile.size:
-            band_valid = False
-            #print("index is either first or last of array!!!")
+            # Step 5: Calculate the average of the left and right minima
+            noise_average = (left_min + right_min) / 2
+
+            # Step 6: Calculate PSNR (Peak Max divided by the average of left and right minima)
+            if noise_average != 0:
+                psnr_value = peak_max / noise_average
+                if psnr_value>self.config["min_psnr"]:
+                    band_valid=True
+            else:
+                psnr_value = 0  # Handle case where noise is zero to avoid division by zero
+
+            if left_min_index==0 or right_min_index==smoothed_profile.size:
+                band_valid = False
+                #print("index is either first or last of array!!!")
 
         logging.info(
             f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
@@ -568,7 +577,7 @@ class RectangularAreaBandDetector:
         # ax[1, 1].set_title(f"Summed Intensity Profile\n BandWidth={self.band_width} ")
 
         ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\n"
-                           f"BandWidth={self.band_width} \n PSNR={self.psnr}\n "
+                           f"BandWidth={self.band_width} \n PSNR={np.around(self.psnr,2)}\n "
                            f"valid?{self.band_valid}")
 
         ax[1, 1].legend()
