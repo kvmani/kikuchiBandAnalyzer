@@ -82,18 +82,22 @@ class BandDetector:
         results = []
         for point in self.points:
             hkl = point["hkl"]  # Extract hkl value from JSON
-            central_line = point["central_line"]
-            line_mid_xy = point["line_mid_xy"]
+            #central_line = point["central_line"]
+            central_line = np.around(point["central_line"], 3).tolist()
+            line_mid_xy = np.around(point["line_mid_xy"],3).tolist()
             line_dist = point["line_dist"]
             hkl_group = point.get("hkl_group", "unknown")
             if hkl_group in self.desired_hkl:
             # Detect the band, using RectangularAreaBandDetector
                 result = self._detect_band(central_line, hkl)
-                result["hkl"] = hkl  # Add hkl label to the result
-                result["line_mid_xy"] = line_mid_xy  # Add line midpoint
-                result["line_dist"] = line_dist  # Add line distance
-                result["hkl_group"] = hkl_group
-                results.append(result)
+                if result["band_valid"]:
+                    result["hkl"] = hkl  # Add hkl label to the result
+                    result["line_mid_xy"] = line_mid_xy  # Add line midpoint
+                    result["line_dist"] = line_dist  # Add line distance
+                    result["hkl_group"] = hkl_group
+                    results.append(result)
+                if len(results)>3:
+                    break
         return results
 
     def _detect_band(self, central_line, hkl):
@@ -131,6 +135,8 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
                 band_detector = BandDetector(image=image, points=points, desired_hkl=desired_hkl, config=config)
                 try:
                     results = band_detector.detect_bands()
+                    # if len(results)>2:
+                    #     break
                 except Exception as e:
                     print(f"pattern: [{row} : {col}] An error occurred while detecting bands: {e}")
                     #results = []  # You can also set a default value or take other appropriate actions
@@ -145,7 +151,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
                 processed_entry["ind"] = row*ncol+col
 
                 processed_data.append(processed_entry)
-    print(f"conpleted kicuchi band width estimation for all patterns!!!")
+    print(f"completed kikuchi band width estimation for all patterns!!!")
 
 
     return processed_data
@@ -220,7 +226,7 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
             })
 
     # Create a DataFrame
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(data).round(3)
     # Save the DataFrame to an Excel file
     df.to_excel(output_path, index=False, engine='openpyxl')
     logging.info(f"Results saved to {output_path}.")

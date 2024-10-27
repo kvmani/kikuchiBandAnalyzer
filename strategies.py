@@ -104,6 +104,7 @@ class RectangularAreaBandDetector:
         self.config = config
         self.hkl = hkl
         self.debug = config.get('debug', False)
+        self.plot_band_detection=config.get('plot_band_detection',False)
         self.psnr = 0
         self.band_valid=False
 
@@ -182,11 +183,10 @@ class RectangularAreaBandDetector:
         x1, y1, x2, y2 = trimmer._trim_line_to_circle(x1, y1, x2, y2)
         self.central_line = [x1, y1, x2, y2]
         rect_width = self.config.get('rectWidth', 20)  # Width of the rectangle
-        logging.info(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
+        logging.debug(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
         #avg_rect_intensity, avg_img_intensity = self.extract_rotated_rectangle_properties(x1, y1, x2, y2, rect_width, plotResults=True)
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)
         summed_profile = np.sum(self.sample_intensities(rect_area), axis=0)
-
         # Detect band start, end, and central peak in the profile
         # band_start, band_end, central_peak = self.detect_edges(summed_profile)
         result = self.detect_edges(summed_profile)
@@ -210,7 +210,7 @@ class RectangularAreaBandDetector:
             self.band_width = 0
             self.band_valid = False
             logging.info("Band width detection failed.")
-        if self.debug:
+        if self.plot_band_detection:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
 

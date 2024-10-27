@@ -1,4 +1,6 @@
 import warnings
+import yaml
+import logging
 
 import matplotlib.pyplot as plt
 import kikuchipy as kp
@@ -16,6 +18,13 @@ from collections import defaultdict
 import json
 from kikuchiBandWidthDetector import process_kikuchi_images
 from kikuchiBandWidthDetector import save_results_to_excel
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def load_config(file_path="bandDetectorOptions.yml"):
+    with open(file_path, "r") as file:
+        config = yaml.safe_load(file)
+    return config
 
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
@@ -114,7 +123,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
     def _kikuchi_line_labels_as_markers(self, desired_hkl='111', **kwargs) -> list:
         """Return a list of Kikuchi line label text markers."""
         coords = self.lines_coordinates(index=(), exclude_nan=False)
-
+        coords=np.around(coords,3)
         # Labels for Kikuchi lines can be based on reflectors (e.g., hkl values)
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
@@ -271,59 +280,37 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
         )
 # Use this CustomKikuchiPatternSimulator in the main method
 def main():
-    choice = 'test_data'  # Variable to control which dataset and phase_list to load
-    #choice = 'debarna_data'  # Variable to control which dataset and phase_list to load
+    # Load configuration
+    config = load_config()
 
-    # Load dataset based on choice
-    if choice == 'test_data':
-        data_path = r"C:\Users\kvman\Downloads\IS_Ni_ebsd_data\Nickel.h5"
-        phase_list = PhaseList(
-            Phase(
-                name="Ni",
-                space_group=225,
-                structure=Structure(
-                    lattice=Lattice(3.5236, 3.5236, 3.5236, 90, 90, 90),
-                    atoms=[Atom("Ni", [0, 0, 0])],
-                ),
-            ),
-        )
-        hkl_list = [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]  # Example HKL list for Nickel
-        pc = [0.545, 0.610, 0.6863]
-    else:
-        data_path = r"C:\Users\kvman\Downloads\OneDrive_1_10-20-2024\magnetite_data.h5"
-        phase_list = PhaseList(
-            Phase(
-                name="Magnetite",
-                space_group=227,
-                structure=Structure(
-                    lattice=Lattice(8.3959, 8.3959, 8.3959, 90, 90, 90),
-                    atoms=[Atom("X", [0, 0, 0]), Atom("Y", [0.5, 0.5, 0.5])],
-                ),
-            ),
-        )
-        hkl_list = [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]  # Example HKL list for the other material
-        ### change this for making it bad
-        pc = [0.54728, 0.7169, 0.6969]
-        #pc = [0.1, 0.7169, 0.6969]
+    data_path = config.get("h5_file_path", "path_to_default_file.h5")
+    crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
+    debug = config.get("debug", False)
+    desired_hkl = config.get("desired_hkl", "111")
 
-    # Load the dataset and preprocess
+    # Load dataset and optional cropping based on debug flag
+    logging.info(f"Loading dataset from: {data_path}")
     s = kp.load(data_path, lazy=False)
-    #s = s.remove_dynamic_background(inplace=False)
-    s.crop(1, start=5, end=25)
-    s.crop(0,start=5,end=25)
-    warnings.warn(
-        "dont forget to remove the following line after end of debugging as currently all patters are being over written")
 
-    if 0:
-        sim_image = np.load('simulated_kikuchi.npy')
-        s.data[0][0]=sim_image
-        s.data[3, 5]=sim_image
-        #s.data[:]=s.data[3][5]
-    else:
-        np.save('real_kikuchi.npy',s.data[0][0])
-    # plt.imshow(s.data[0][0])
-    # plt.show()
-    #s.data[:] = s.data[3, 5][None, None, :, :]
+    if debug:
+        logging.info("Debug mode enabled: Cropping data for faster processing.")
+        s.crop(1, start=crop_start, end=crop_end)
+        s.crop(0, start=crop_start, end=crop_end)
+
+    # Setup detector and phase list based on material properties
+    phase_config = config["phase_list"]
+    phase_list = PhaseList(
+        Phase(
+            name=phase_config["name"],
+            space_group=phase_config["space_group"],
+            structure=Structure(
+                lattice=Lattice(*phase_config["lattice"]),
+                atoms=[Atom(atom["element"], atom["position"]) for atom in phase_config["atoms"]],
+            ),
+        ),
+    )
+    hkl_list = config["hkl_list"]
+    pc = config.get("pc", [0.545, 0.610, 0.6863])
 
     # Detector setup and pattern extraction
     sig_shape = s.axes_manager.signal_shape[::-1]
@@ -331,9 +318,9 @@ def main():
 
     # PhaseList and indexing
     indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
-    xmap,index_data, indexed_band_data = s.hough_indexing(phase_list=phase_list, indexer=indexer,
-                                        return_index_data=True, return_band_data=True,
-                                        verbose=1)
+    xmap, index_data, indexed_band_data = s.hough_indexing(
+        phase_list=phase_list, indexer=indexer, return_index_data=True, return_band_data=True, verbose=1
+    )
 
     # Use the CustomKikuchiPatternSimulator for geometrical simulations
     ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list)
@@ -341,30 +328,27 @@ def main():
     simulator = CustomKikuchiPatternSimulator(ref)  # Use the custom simulator
     sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
 
-    # Add markers (including zone axis labels) to the signal
-    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, zone_axes_labels=False)
+    # Add markers and Kikuchi line labels to the signal
+    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True)
     s.add_marker(markers, plot_marker=False, permanent=True)
 
-    ### Call process_kikuchi_images for each pixel's image data and kikuchi_line_dict_list ###
+    # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
+    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list,
+                                               desired_hkl=desired_hkl)
+    save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
-    # Call process_kikuchi_images with the EBSD dataset and the band detection configuration
-    ### this is the code which calls the main band width estimator
-    # processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list)
-    # save_results_to_excel(processed_results, "bandOutputData.xlsx")
+    logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
-    # Optionally save or visualize the results
-    # save_results_to_json(processed_results, "bandOutputData.json")
-    # save_results_to_excel(processed_results, "bandOutputData.xlsx")
-
-    # RGB navigator (optional visualization)
-    v_ipf = Vector3d.xvector()
-    sym = xmap.phases[0].point_group
-    ckey = plot.IPFColorKeyTSL(sym, v_ipf)
-    rgb_x = ckey.orientation2color(xmap.rotations)
-    maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
-    s.plot(maps_nav_rgb)
-    plt.show()
+    # Optional visualization
+    if config.get("plot_results", False):
+        v_ipf = Vector3d.xvector()
+        sym = xmap.phases[0].point_group
+        ckey = plot.IPFColorKeyTSL(sym, v_ipf)
+        rgb_x = ckey.orientation2color(xmap.rotations)
+        maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
+        s.plot(maps_nav_rgb)
+        plt.show()
 
 
 if __name__ == "__main__":
