@@ -209,7 +209,7 @@ class RectangularAreaBandDetector:
         else:
             self.band_width = 0
             self.band_valid = False
-            logging.info("Band width detection failed.")
+            logging.debug("Band width detection failed.")
         if self.plot_band_detection:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
@@ -366,7 +366,7 @@ class RectangularAreaBandDetector:
 
         # Resize the image
         resized_image = cv2.resize(upright_rectangle, (num_columns, num_rows,))  # Correct shape order
-        logging.info(
+        logging.debug(
             f"Sampled intensities from the rectangle: {resized_image.shape} with scaling factor: {scaling_factor}")
 
         # If debugging is enabled, plot the intensity profiles
@@ -447,9 +447,9 @@ class RectangularAreaBandDetector:
                 band_valid = False
                 #print("index is either first or last of array!!!")
 
-        logging.info(
+        logging.debug(
             f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
-        logging.info(f"PSNR value: {psnr_value}")
+        logging.debug(f"PSNR value: {psnr_value}")
 
         # Step 7: Return the results in the dictionary
         return {

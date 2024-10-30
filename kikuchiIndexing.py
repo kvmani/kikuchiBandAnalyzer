@@ -239,7 +239,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
             lines_kwargs: Optional[dict] = None,
             zone_axes_kwargs: Optional[dict] = None,
             zone_axes_labels_kwargs: Optional[dict] = None,
-            kikuchi_line_labels_kwargs: Optional[dict] = None,  # kwargs for Kikuchi line labels
+            kikuchi_line_labels_kwargs: Optional[dict] = None,  # kwargs for Kikuchi line labels,
+            desired_hkl='111',
             pc_kwargs: Optional[dict] = None,
     ) -> list:
         """Return a list of simulation markers, including Kikuchi line labels."""
@@ -257,7 +258,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         if kikuchi_line_labels:
             if kikuchi_line_labels_kwargs is None:
                 kikuchi_line_labels_kwargs = {}
-            markersTmp,  grouped_kikuchi_dict_list = self._kikuchi_line_labels_as_markers(**kikuchi_line_labels_kwargs)
+            markersTmp,  grouped_kikuchi_dict_list = self._kikuchi_line_labels_as_markers(desired_hkl=desired_hkl, **kikuchi_line_labels_kwargs)
             markers+=markersTmp
 
 
@@ -329,8 +330,9 @@ def main():
     sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
 
     # Add markers and Kikuchi line labels to the signal
-    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True)
-    s.add_marker(markers, plot_marker=False, permanent=True)
+    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=config["desired_hkl"])
+    s.add_marker(markers, plot_marker=False, permanent=True, )
+    logging.info(f"Completed band identification for width estimation. Now starting the band width estimation!!!")
 
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
@@ -341,14 +343,14 @@ def main():
     logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
     # Optional visualization
-    if config.get("plot_results", False):
-        v_ipf = Vector3d.xvector()
-        sym = xmap.phases[0].point_group
-        ckey = plot.IPFColorKeyTSL(sym, v_ipf)
-        rgb_x = ckey.orientation2color(xmap.rotations)
-        maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
-        s.plot(maps_nav_rgb)
-        plt.show()
+
+    v_ipf = Vector3d.xvector()
+    sym = xmap.phases[0].point_group
+    ckey = plot.IPFColorKeyTSL(sym, v_ipf)
+    rgb_x = ckey.orientation2color(xmap.rotations)
+    maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
+    s.plot(maps_nav_rgb)
+    plt.show()
 
 
 if __name__ == "__main__":

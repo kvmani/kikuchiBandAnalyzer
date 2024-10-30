@@ -5,7 +5,7 @@
         "points": [
             {
                 "hkl": "-1  1  1",
-                "central_line":  [48.6,31.7, 217, 137],
+                "central_line":  [100,211, 85, 13],
                 "line_mid_xy":  [90, 197],
                 "line_dist": 60.2150115145,
                 "comment": "manually Added for debugging.",
@@ -13,7 +13,7 @@
             },
             {
                 "hkl": "1 -1  1",
-                "central_line":  [222, 110, 46.5, 142.6],
+                "central_line":  [142, 5, 11.5, 148.6],
                 "line_mid_xy":  [115,120],
                 "line_dist": 60.7371459666,
                 "hkl_group": "111",
