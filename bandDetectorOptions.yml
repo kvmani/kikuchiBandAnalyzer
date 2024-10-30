@@ -1,7 +1,36 @@
-gradient_threshold: 50
-perpendicular_line_length: 40
-smoothing_sigma: 2
-strategy: "rectangular_area"
-debug: true
-rectWidth: 50
-### sggsgsh;gohs
+# Configuration options for Kikuchi pattern and EBSD data processing
+
+h5_file_path: "C:/Users/kvman/Downloads/IS_Ni_ebsd_data/Nickel.h5"  # Path to the .h5 EBSD dataset file
+crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing
+crop_end: 20      # Ending index for cropping, used only in debug mode for faster processing
+debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs
+desired_hkl: "111"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+# Configuration for phases in the EBSD data
+phase_list:
+  name: "Ni"                 # Phase name, e.g., "Ni" for Nickel
+  space_group: 225           # Space group number for the crystal structure
+  lattice: [3.5236, 3.5236, 3.5236, 90, 90, 90]  # Lattice parameters: a, b, c, alpha, beta, gamma
+  atoms:                      # List of atoms in the structure
+    - element: "Ni"           # Element symbol
+      position: [0, 0, 0]     # Atom Positions in the unit cell
+
+# List of HKL indices for Kikuchi line detection
+hkl_list:
+  - [1, 1, 1]
+  - [2, 0, 0]
+  - [2, 2, 0]
+  - [3, 1, 1]
+
+# Detector configuration
+pc: [0.545, 0.610, 0.6863]  # Pattern center for EBSD detector
+
+# Kikuchi band width detection parameters
+gradient_threshold: 50      # Threshold for edge detection gradients, typically between 20-100
+perpendicular_line_length: 40  # Length of perpendicular lines to the detected bands, useful for line fitting
+smoothing_sigma: 2          # Sigma for Gaussian smoothing, affects edge sharpness; usually between 1-3
+strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangular_area" or others as per implementation
+rectWidth: 50               # Width of the rectangle for detection; typical values are 30-60
+min_psnr: 1.1               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
+
+plot_results: false         # Set to true if results should be plotted (for debugging/visualization purposes)
+plot_band_detection: false
