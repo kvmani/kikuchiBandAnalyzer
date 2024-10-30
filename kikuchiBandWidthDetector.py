@@ -249,7 +249,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
 
     logging.info(f"Starting processing for Kikuchi images.")
     start_time = time.time()  # Start timing
-    nPatterns = np.prod(ebsd_data.shape)
+    nPatterns = np.prod(ebsd_data.shape[:2]) ### only rows and cols are needed hence :2
     processed_data = process_kikuchi_images_serial(ebsd_data, json_input, desired_hkl, config)
     end_time = time.time()  # End timing
     duration = end_time - start_time

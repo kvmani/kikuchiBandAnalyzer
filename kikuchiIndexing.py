@@ -351,8 +351,9 @@ def main():
         if "Band Width" not in df.columns:
             logging.error("Band Width column not found in bandOutputData.xlsx.")
             return
-        band_width_data = df["Band Width"].values
-        logging.info("Loaded band_width data from Excel.")
+        # band_width_data = df["Band Width"].values
+        # psnr_data = df["psnr"].values
+        logging.info("Loaded band_width and psnr data from Excel.")
 
         # Open the copied HDF5 file and add the Band_Width data node
         with h5py.File(modified_data_path, "a") as h5file:
@@ -366,13 +367,17 @@ def main():
 
             # Create a zero-initialized array of the same length as CI data for Band_Width
             band_width_array = np.zeros_like(ci_data, dtype="float32")
+            psnr_array = np.zeros_like(ci_data, dtype="float32")
 
             # Fill band_width_array at positions specified by the Ind column in the Excel data
-            for idx, band_width in zip(df["Ind"], df["Band Width"]):
+            for idx, band_width, psnr in zip(df["Ind"], df["Band Width"], df["psnr"]):
                 band_width_array[idx] = band_width
+                psnr_array[idx] = psnr
 
             # Create the new dataset for Band_Width with the filled values
             h5file.create_dataset("/Nickel/EBSD/Data/Band_Width", data=band_width_array)
+            h5file.create_dataset("/Nickel/EBSD/Data/psnr", data=psnr_array)
+
             logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
         logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
