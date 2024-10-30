@@ -1,4 +1,4 @@
-import warnings
+import warnings, os
 import yaml
 import logging
 
@@ -18,6 +18,8 @@ from collections import defaultdict
 import json
 from kikuchiBandWidthDetector import process_kikuchi_images
 from kikuchiBandWidthDetector import save_results_to_excel
+import shutil
+import h5py
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -285,6 +287,10 @@ def main():
     config = load_config()
 
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
+    modified_data_path = os.path.splitext(data_path)[0] + "_modified.h5"
+    shutil.copy(data_path, modified_data_path)
+    logging.info(f"Copied HDF5 file to: {modified_data_path}")
+
     crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
     debug = config.get("debug", False)
     desired_hkl = config.get("desired_hkl", "111")
@@ -340,7 +346,35 @@ def main():
                                                desired_hkl=desired_hkl)
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
-    logging.info("Process completed. Results saved to bandOutputData.xlsx")
+    if not config["debug"]:
+        df = pd.read_excel(r"filtered_band_data.xlsx")
+        if "Band Width" not in df.columns:
+            logging.error("Band Width column not found in bandOutputData.xlsx.")
+            return
+        band_width_data = df["Band Width"].values
+        logging.info("Loaded band_width data from Excel.")
+
+        # Open the copied HDF5 file and add the Band_Width data node
+        with h5py.File(modified_data_path, "a") as h5file:
+            ci_data = h5file["/Nickel/EBSD/Data/CI"]
+
+            # Sanity check: Ensure the maximum index in the Ind column does not exceed the length of CI data
+            max_index = df["Ind"].max()
+            if max_index >= len(ci_data):
+                logging.error("Maximum index in 'Ind' column exceeds length of /Nickel/EBSD/Data/CI.")
+                return
+
+            # Create a zero-initialized array of the same length as CI data for Band_Width
+            band_width_array = np.zeros_like(ci_data, dtype="float32")
+
+            # Fill band_width_array at positions specified by the Ind column in the Excel data
+            for idx, band_width in zip(df["Ind"], df["Band Width"]):
+                band_width_array[idx] = band_width
+
+            # Create the new dataset for Band_Width with the filled values
+            h5file.create_dataset("/Nickel/EBSD/Data/Band_Width", data=band_width_array)
+            logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
+        logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
     # Optional visualization
 

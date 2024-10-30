@@ -3,7 +3,7 @@
 h5_file_path: "C:/Users/kvman/Downloads/IS_Ni_ebsd_data/Nickel.h5"  # Path to the .h5 EBSD dataset file
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing
 crop_end: 50 # Ending index for cropping, used only in debug mode for faster processing
-debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs
+debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
 desired_hkl: "111"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 # Configuration for phases in the EBSD data
 phase_list:
