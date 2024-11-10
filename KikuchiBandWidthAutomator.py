@@ -1,3 +1,4 @@
+import time
 import warnings, os
 import yaml
 import logging
@@ -20,6 +21,7 @@ from kikuchiBandWidthDetector import process_kikuchi_images
 from kikuchiBandWidthDetector import save_results_to_excel
 import shutil
 import h5py
+import utilities as ut
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -282,12 +284,22 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
             detector, rotations, result.reflectors, result._lines, result._zone_axes
         )
 # Use this CustomKikuchiPatternSimulator in the main method
+
+
 def main():
     # Load configuration
+    start_time = time.time()  # Start timing
     config = load_config()
-
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
+    if data_path.endswith(".oh5"):
+        h5_data_path = os.path.splitext(data_path)[0] + ".h5"
+        shutil.copy(data_path, h5_data_path)
+        logging.info(f"Copied .oh5 file to: {h5_data_path}")
+        data_path=h5_data_path
+
+
     modified_data_path = os.path.splitext(data_path)[0] + "_modified.h5"
+    ang_path = os.path.splitext(data_path)[0] + ".ang"
     shutil.copy(data_path, modified_data_path)
     logging.info(f"Copied HDF5 file to: {modified_data_path}")
 
@@ -346,40 +358,46 @@ def main():
                                                desired_hkl=desired_hkl)
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
 
-    if not config["debug"]:
-        df = pd.read_excel(r"filtered_band_data.xlsx")
-        if "Band Width" not in df.columns:
-            logging.error("Band Width column not found in bandOutputData.xlsx.")
+
+    df = pd.read_excel(r"filtered_band_data.xlsx")
+    if "Band Width" not in df.columns:
+        logging.error("Band Width column not found in bandOutputData.xlsx.")
+        return
+    # band_width_data = df["Band Width"].values
+    # psnr_data = df["psnr"].values
+    logging.info("Loaded band_width and psnr data from Excel.")
+
+    # Open the copied HDF5 file and add the Band_Width data node
+    with h5py.File(modified_data_path, "a") as h5file:
+        target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
+
+        ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
+
+        # Sanity check: Ensure the maximum index in the Ind column does not exceed the length of CI data
+        max_index = df["Ind"].max()
+        if max_index >= len(ci_data):
+            logging.error("Maximum index in 'Ind' column exceeds length of /Nickel/EBSD/Data/CI.")
             return
-        # band_width_data = df["Band Width"].values
-        # psnr_data = df["psnr"].values
-        logging.info("Loaded band_width and psnr data from Excel.")
 
-        # Open the copied HDF5 file and add the Band_Width data node
-        with h5py.File(modified_data_path, "a") as h5file:
-            ci_data = h5file["/Nickel/EBSD/Data/CI"]
+        # Create a zero-initialized array of the same length as CI data for Band_Width
+        band_width_array = np.zeros_like(ci_data, dtype="float32")
+        psnr_array = np.zeros_like(ci_data, dtype="float32")
 
-            # Sanity check: Ensure the maximum index in the Ind column does not exceed the length of CI data
-            max_index = df["Ind"].max()
-            if max_index >= len(ci_data):
-                logging.error("Maximum index in 'Ind' column exceeds length of /Nickel/EBSD/Data/CI.")
-                return
+        # Fill band_width_array at positions specified by the Ind column in the Excel data
+        for idx, band_width, psnr in zip(df["Ind"], df["Band Width"], df["psnr"]):
+            band_width_array[idx] = band_width
+            psnr_array[idx] = psnr
 
-            # Create a zero-initialized array of the same length as CI data for Band_Width
-            band_width_array = np.zeros_like(ci_data, dtype="float32")
-            psnr_array = np.zeros_like(ci_data, dtype="float32")
+        # Create the new dataset for Band_Width with the filled values
+        ut.modify_ang_file(ang_path,IQ=band_width_array)
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
 
-            # Fill band_width_array at positions specified by the Ind column in the Excel data
-            for idx, band_width, psnr in zip(df["Ind"], df["Band Width"], df["psnr"]):
-                band_width_array[idx] = band_width
-                psnr_array[idx] = psnr
+        logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
+    logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
-            # Create the new dataset for Band_Width with the filled values
-            h5file.create_dataset("/Nickel/EBSD/Data/Band_Width", data=band_width_array)
-            h5file.create_dataset("/Nickel/EBSD/Data/psnr", data=psnr_array)
-
-            logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
-        logging.info("Process completed. Results saved to bandOutputData.xlsx")
+    end_time = time.time()  # Start timing
+    logging.info(f"The total processing time is : {start_time-end_time} seconds")
 
     # Optional visualization
 
@@ -390,7 +408,6 @@ def main():
     maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
     s.plot(maps_nav_rgb)
     plt.show()
-
 
 if __name__ == "__main__":
     main()
