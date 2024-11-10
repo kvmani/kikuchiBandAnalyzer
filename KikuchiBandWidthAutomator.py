@@ -397,7 +397,7 @@ def main():
     logging.info("Process completed. Results saved to bandOutputData.xlsx")
 
     end_time = time.time()  # Start timing
-    logging.info(f"The total processing time is : {start_time-end_time} seconds")
+    logging.info(f"The total processing time is : {end_time-start_time} seconds")
 
     # Optional visualization
 
