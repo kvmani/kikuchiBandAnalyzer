@@ -289,7 +289,7 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 def main():
     # Load configuration
     start_time = time.time()  # Start timing
-    config = load_config()
+    config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
     if data_path.endswith(".oh5"):
         h5_data_path = os.path.splitext(data_path)[0] + ".h5"
@@ -324,7 +324,10 @@ def main():
             space_group=phase_config["space_group"],
             structure=Structure(
                 lattice=Lattice(*phase_config["lattice"]),
-                atoms=[Atom(atom["element"], atom["position"]) for atom in phase_config["atoms"]],
+                atoms=[
+                    Atom(atom["element"], atom["position"])
+                    for atom in phase_config["atoms"]
+                ],
             ),
         ),
     )
