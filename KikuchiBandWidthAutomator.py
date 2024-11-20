@@ -289,17 +289,19 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 def main():
     # Load configuration
     start_time = time.time()  # Start timing
-    config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
+    config = load_config(file_path="bandDetectorOptions.yml")  # Change the input file name as needed
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
+    output_dir = os.path.dirname(data_path)  # Get the directory of the input file
+    base_name = os.path.splitext(os.path.basename(data_path))[0]  # Extract base name without extension
+
     if data_path.endswith(".oh5"):
-        h5_data_path = os.path.splitext(data_path)[0] + ".h5"
+        h5_data_path = os.path.join(output_dir, f"{base_name}.h5")
         shutil.copy(data_path, h5_data_path)
         logging.info(f"Copied .oh5 file to: {h5_data_path}")
-        data_path=h5_data_path
+        data_path = h5_data_path
 
-
-    modified_data_path = os.path.splitext(data_path)[0] + "_modified.h5"
-    ang_path = os.path.splitext(data_path)[0] + ".ang"
+    modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
+    ang_path = os.path.join(output_dir, f"{base_name}_modified.ang")
     shutil.copy(data_path, modified_data_path)
     logging.info(f"Copied HDF5 file to: {modified_data_path}")
 
@@ -352,22 +354,20 @@ def main():
 
     # Add markers and Kikuchi line labels to the signal
     markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=config["desired_hkl"])
-    s.add_marker(markers, plot_marker=False, permanent=True, )
-    logging.info(f"Completed band identification for width estimation. Now starting the band width estimation!!!")
+    s.add_marker(markers, plot_marker=False, permanent=True)
+    logging.info("Completed band identification for width estimation. Now starting the band width estimation!")
 
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
-    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list,
-                                               desired_hkl=desired_hkl)
-    save_results_to_excel(processed_results, "bandOutputData.xlsx")
+    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl)
+    output_excel_path = os.path.join(output_dir, f"{base_name}_bandOutputData.xlsx")
+    filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
+    save_results_to_excel(processed_results, output_excel_path,filtered_excel_path)
 
-
-    df = pd.read_excel(r"filtered_band_data.xlsx")
+    df = pd.read_excel(filtered_excel_path)
     if "Band Width" not in df.columns:
-        logging.error("Band Width column not found in bandOutputData.xlsx.")
+        logging.error("Band Width column not found in filtered_band_data.xlsx.")
         return
-    # band_width_data = df["Band Width"].values
-    # psnr_data = df["psnr"].values
     logging.info("Loaded band_width and psnr data from Excel.")
 
     # Open the copied HDF5 file and add the Band_Width data node
@@ -386,21 +386,34 @@ def main():
         band_width_array = np.zeros_like(ci_data, dtype="float32")
         psnr_array = np.zeros_like(ci_data, dtype="float32")
 
+
         # Fill band_width_array at positions specified by the Ind column in the Excel data
         for idx, band_width, psnr in zip(df["Ind"], df["Band Width"], df["psnr"]):
             band_width_array[idx] = band_width
             psnr_array[idx] = psnr
 
         # Create the new dataset for Band_Width with the filled values
-        ut.modify_ang_file(ang_path,IQ=band_width_array)
+        desired_hkl_ref_width = config["desired_hkl_ref_width"]
+        band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
+        elastic_modulus = float(config["elastic_modulus"])
+        band_stress_array = band_strain_array * elastic_modulus
+        angInputDict = {"IQ":band_width_array, "PRIAS_Bottom_Strip":band_strain_array,
+                        "PRIAS_Center_Square":band_stress_array,
+                        "PRIAS_Top_Strip":psnr_array,
+                        }
+
+        ut.modify_ang_file(ang_path, **angInputDict)
+        logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
 
         logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
-    logging.info("Process completed. Results saved to bandOutputData.xlsx")
+    logging.info("Process completed. Results saved to Excel files and modified .ang file.")
 
-    end_time = time.time()  # Start timing
-    logging.info(f"The total processing time is : {end_time-start_time} seconds")
+    end_time = time.time()  # End timing
+    logging.info(f"The total processing time is : {end_time - start_time} seconds")
 
     # Optional visualization
 
@@ -411,6 +424,7 @@ def main():
     maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
     s.plot(maps_nav_rgb)
     plt.show()
+
 
 if __name__ == "__main__":
     main()

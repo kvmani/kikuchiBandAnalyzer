@@ -288,7 +288,7 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
     print(output_path)
 
 
-def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
+def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_excel_path='filtered_band_data.xlsx'):
     """
     Saves the processed results to an Excel (.xlsx) file.
     :param results: List of dictionaries with processed band data.
@@ -332,9 +332,10 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx"):
     # Save the DataFrame to an Excel file
     df.to_excel(output_path, index=False, engine='openpyxl')
     logging.info(f"Results saved to {output_path}.")
+
     df_filtered = df[df['band_valid'] == True]
     df_grouped = df_filtered.loc[df_filtered.groupby('Ind')['psnr'].idxmax()]
-    df_grouped.to_excel('filtered_band_data.xlsx', index=False, engine='openpyxl')
+    df_grouped.to_excel(filtered_excel_path, index=False, engine='openpyxl')
 
 
 if __name__ == "__main__":
