@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 
-def modify_ang_file(file_path, **kwargs):
+def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
     """
     Modifies the specified .ang file by updating specified columns with new values.
     The method reads an .ang file, extracts its `NCOLS_EVEN` and `NROWS` values from the header,
@@ -89,7 +89,7 @@ def modify_ang_file(file_path, **kwargs):
 
     # Create the new filename with "_modified"
     base, ext = os.path.splitext(file_path)
-    new_file_path = f"{base}_modified{ext}"
+    new_file_path = f"{base}_{file_suffix}{ext}"
 
     # Save the modified file
     with open(new_file_path, 'w') as f:

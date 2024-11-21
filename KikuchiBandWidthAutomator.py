@@ -402,7 +402,11 @@ def main():
                         "PRIAS_Top_Strip":psnr_array,
                         }
 
-        ut.modify_ang_file(ang_path, **angInputDict)
+        ut.modify_ang_file(ang_path, "band_width", IQ=band_width_array)
+        ut.modify_ang_file(ang_path, "strain", IQ=band_strain_array)
+        ut.modify_ang_file(ang_path, "stress", IQ=band_stress_array)
+        ut.modify_ang_file(ang_path, "psnr", IQ=psnr_array)
+
         logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
