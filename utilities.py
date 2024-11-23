@@ -89,7 +89,7 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
 
     # Create the new filename with "_modified"
     base, ext = os.path.splitext(file_path)
-    new_file_path = f"{base}_{file_suffix}{ext}"
+    new_file_path = f"{base}_modified_{file_suffix}{ext}"
 
     # Save the modified file
     with open(new_file_path, 'w') as f:

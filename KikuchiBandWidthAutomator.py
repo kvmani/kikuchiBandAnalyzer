@@ -289,6 +289,7 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 def main():
     # Load configuration
     start_time = time.time()  # Start timing
+    #config = load_config(file_path="bandDetectorOptionsMagnetite.yml")  # Change the input file name as needed
     config = load_config(file_path="bandDetectorOptions.yml")  # Change the input file name as needed
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
     output_dir = os.path.dirname(data_path)  # Get the directory of the input file
@@ -301,7 +302,8 @@ def main():
         data_path = h5_data_path
 
     modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
-    ang_path = os.path.join(output_dir, f"{base_name}_modified.ang")
+    in_ang_path = os.path.join(output_dir, f"{base_name}.ang")
+    out_ang_path = os.path.join(output_dir, f"{base_name}_modified.ang")
     shutil.copy(data_path, modified_data_path)
     logging.info(f"Copied HDF5 file to: {modified_data_path}")
 
@@ -359,7 +361,7 @@ def main():
 
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
-    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl)
+    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl, config=config)
     output_excel_path = os.path.join(output_dir, f"{base_name}_bandOutputData.xlsx")
     filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
     save_results_to_excel(processed_results, output_excel_path,filtered_excel_path)
@@ -402,10 +404,10 @@ def main():
                         "PRIAS_Top_Strip":psnr_array,
                         }
 
-        ut.modify_ang_file(ang_path, "band_width", IQ=band_width_array)
-        ut.modify_ang_file(ang_path, "strain", IQ=band_strain_array)
-        ut.modify_ang_file(ang_path, "stress", IQ=band_stress_array)
-        ut.modify_ang_file(ang_path, "psnr", IQ=psnr_array)
+        ut.modify_ang_file(in_ang_path, "band_width", IQ=band_width_array)
+        ut.modify_ang_file(in_ang_path, "strain", IQ=band_strain_array)
+        ut.modify_ang_file(in_ang_path, "stress", IQ=band_stress_array)
+        ut.modify_ang_file(in_ang_path, "psnr", IQ=psnr_array)
 
         logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)

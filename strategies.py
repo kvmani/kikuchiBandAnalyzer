@@ -183,6 +183,7 @@ class RectangularAreaBandDetector:
         x1, y1, x2, y2 = trimmer._trim_line_to_circle(x1, y1, x2, y2)
         self.central_line = [x1, y1, x2, y2]
         rect_width = self.config.get('rectWidth', 20)  # Width of the rectangle
+
         logging.debug(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
         #avg_rect_intensity, avg_img_intensity = self.extract_rotated_rectangle_properties(x1, y1, x2, y2, rect_width, plotResults=True)
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)
@@ -443,7 +444,7 @@ class RectangularAreaBandDetector:
             else:
                 psnr_value = 0  # Handle case where noise is zero to avoid division by zero
 
-            if left_min_index==0 or right_min_index==smoothed_profile.size:
+            if left_min_index<5 or right_min_index>smoothed_profile.size-5:
                 band_valid = False
                 #print("index is either first or last of array!!!")
 

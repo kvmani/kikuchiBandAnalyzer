@@ -233,7 +233,7 @@ def load_config(file_path="bandDetectorOptions.yml"):
 
 
 
-def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None):
+def process_kikuchi_images(ebsd_data, json_input, config_file = "bandWidthOptions.yml", desired_hkl='111', config=None):
     """
     Processes multiple Kikuchi images for each pixel in the EBSD dataset.
     Decides between serial and parallel execution based on config.
@@ -245,7 +245,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
     :return: Updated list of dictionaries with band detection results for each pixel.
     """
     if config is None:
-        config = load_config()
+        config = load_config(file_path=config_file)
 
     logging.info(f"Starting processing for Kikuchi images.")
     start_time = time.time()  # Start timing
@@ -344,6 +344,7 @@ if __name__ == "__main__":
 
     # Load EBSD data
     ebsd_data = np.load('real_kikuchi.npy')
+
     ebsd_data = np.tile(ebsd_data, (50, 50, 1, 1))  # Example setup, adjust as needed
 
     # Load JSON input data
