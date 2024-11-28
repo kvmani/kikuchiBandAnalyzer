@@ -1,8 +1,11 @@
-import os
+import os, random
 import pandas as pd
 import numpy as np
 import logging
-
+import h5py
+import shutil
+import os
+import matplotlib.pyplot as plt
 def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
     """
     Modifies the specified .ang file by updating specified columns with new values.
@@ -97,6 +100,145 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
 
     logging.info(f"Modified file saved as: {new_file_path}")
 
+def create_temp_file(original_path):
+    """
+    Creates a temporary copy of the original HDF5 file for processing.
+
+    Args:
+        original_path (str): Path to the original HDF5 file.
+
+    Returns:
+        str: Path to the temporary file.
+    """
+    temp_path = f"{os.path.splitext(original_path)[0]}_temp.h5"
+    shutil.copy(original_path, temp_path)
+    logging.info(f"Temporary file created at: {temp_path}")
+    return temp_path
+
+
+
+def reorder_patterns_in_hdf(file_path, target_dataset_name,debug=False):
+    """
+    Reorders the patterns in the HDF5 file from row-major to column-major order.
+
+    Args:
+        file_path (str): Path to the HDF5 file.
+        target_dataset_name (str): Dataset name under /{target_dataset_name}/EBSD/Data/Pattern.
+
+    Returns:
+        None
+    """
+    logging.warning("Reordering patterns from row-major to column-major order.")
+    with h5py.File(file_path, "r+") as h5file:
+        # Read nRows and nCols from the header
+        header = h5file[f"/{target_dataset_name}/EBSD/Header"]
+        nRows = int(header["nRows"][:])
+        nCols = int(header["nColumns"][:])
+
+        # Access the pattern data
+        pattern_dataset = h5file[f"/{target_dataset_name}/EBSD/Data/Pattern"]
+        patterns = pattern_dataset[:]
+
+        if debug:
+            every=10
+            m,n = patterns[0].shape
+            logging.warning(f"Note that every {every} is being zeroed !! dont forget to remove this")
+            #patterns[::every, :, :] = np.random.randint(0, 255, (m, n))
+            patterns[100, :, :] = np.random.randint(0, 255, (m, n))
+            reordered_patterns = patterns.copy()
+        else:
+            reordered_patterns = np.zeros_like(patterns)
+
+        # Verify the shape
+        nPixels, pattern_height, pattern_width = patterns.shape
+        assert nPixels == nRows * nCols, (f"Mismatch between nPixels and nRows*nCols. {nPixels=}"
+                                          f" {nRows=}  {nCols=}")
+
+        # Create a new array for reordered patterns
+        # Reorder patterns
+        c_indices = np.arange(nPixels).reshape((nRows, nCols), order='C').flatten(order='F')
+        f_indices = np.arange(nPixels).reshape((nRows, nCols ), order='F').flatten(order='F')
+
+        # Map patterns from C-order to F-order
+        for c_index, f_index in zip(c_indices, f_indices):
+            reordered_patterns[f_index] = patterns[c_index].copy()
+
+            if debug and c_index < 10:  # Log first 10 mappings for verification
+                logging.info(f"Mapping Patterns[c_index={c_index}] t"
+                             f"o Reordered[f_index={f_index}]")
+
+        sanity_check_reordering(patterns, reordered_patterns, nRows,nCols, debug=debug)
+
+        # Replace the dataset with reordered patterns
+        del h5file[f"/{target_dataset_name}/EBSD/Data/Pattern"]
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Pattern", data=reordered_patterns)
+        #h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Pattern", data=patterns)
+
+def sanity_check_reordering(patterns, reordered_patterns, nRows, nCols, debug=False):
+    """
+    Perform sanity checks to ensure reordering is happening using the new index calculation logic.
+    If debug is enabled, plot a random index comparison of reordered and original patterns.
+
+    Args:
+        patterns (np.ndarray): Original patterns array.
+        reordered_patterns (np.ndarray): Reordered patterns array.
+        nRows (int): Number of rows in the EBSD grid.
+        nCols (int): Number of columns in the EBSD grid.
+        debug (bool): Whether to plot debug information.
+    """
+    nPixels = nRows * nCols
+    mismatches = []
+
+    # Check if reordering is happening correctly
+    for i in range(nPixels):
+        # Calculate (row, col) for current index i in row-major order
+        row = i // nCols
+        col = i % nCols
+
+        # Calculate the new index j in column-major order
+        j = col * nRows + row
+
+        # Compare patterns[i] with reordered_patterns[j]
+        if not np.array_equal(reordered_patterns[i], patterns[i]):
+            mismatches.append((i, i, row, col))
+
+    if mismatches:
+        logging.info(f"Sanity check passed: Reordering is happening. Mismatched indices: {len(mismatches)}")
+    else:
+        logging.warning("Sanity check failed: Reordered patterns are identical to original patterns.")
+
+    if debug and mismatches:
+        # Debug visualization for a random mismatch
+        import random
+        random_i, random_j, random_row, random_col = random.choice(mismatches)
+
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(12, 8))
+
+        # Plot reordered_patterns[random_j]
+        plt.subplot(2, 2, 1)
+        plt.imshow(reordered_patterns[random_j], cmap='gray')
+        plt.title(f"Reordered Patterns[new_index={random_j}]")
+
+        # Plot patterns[random_i]
+        plt.subplot(2, 2, 2)
+        plt.imshow(patterns[random_i], cmap='gray')
+        plt.title(f"Patterns[old_index={random_i}]")
+
+        # Verify mapping in reverse
+        plt.subplot(2, 2, 3)
+        plt.imshow(reordered_patterns[random_i], cmap='gray')
+        plt.title(f"Reordered Patterns[old_index={random_i}]")
+
+        plt.subplot(2, 2, 4)
+        plt.imshow(patterns[random_j], cmap='gray')
+        plt.title(f"Patterns[new_index={random_j}]")
+
+        plt.tight_layout()
+        plt.show()
+
+    if debug and not mismatches:
+        logging.info("Debug mode: No mismatches to plot as reordering is consistent.")
 
 def create_mock_ang_file(file_path, nrows, ncols_even, headers, column_headers):
     """

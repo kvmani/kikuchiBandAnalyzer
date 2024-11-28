@@ -288,12 +288,35 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 
 def main():
     # Load configuration
-    start_time = time.time()  # Start timing
-    #config = load_config(file_path="bandDetectorOptionsMagnetite.yml")  # Change the input file name as needed
-    config = load_config(file_path="bandDetectorOptions.yml")  # Change the input file name as needed
+    start_time = time.time()
+    #config = load_config(file_path="bandDetectorOptions.yml")
+    config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
+    debug = config.get("debug", False)
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
-    output_dir = os.path.dirname(data_path)  # Get the directory of the input file
-    base_name = os.path.splitext(os.path.basename(data_path))[0]  # Extract base name without extension
+    output_dir = os.path.dirname(data_path)
+    base_name = os.path.splitext(os.path.basename(data_path))[0]
+
+    # Create a backup of the original file
+
+
+    # Copy the backup to a temp file for modifications
+    modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
+
+    logging.info(f"Copied backup file to: {modified_data_path}")
+
+    # Reorder patterns if the flag is enabled
+    if config.get("reorder_patterns_from_hdf", False):
+        temp_data_path = ut.create_temp_file(data_path)
+        shutil.copy(temp_data_path, modified_data_path)
+        with h5py.File(modified_data_path, "r") as h5file:
+            target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
+        ut.reorder_patterns_in_hdf(modified_data_path, target_dataset_name,debug=debug)
+        data_path = modified_data_path
+        #modified_data_path = temp_data_path
+    else:
+        shutil.copy(data_path, modified_data_path)
+        logging.info(f"Copied HDF5 file to: {modified_data_path}")
+
 
     if data_path.endswith(".oh5"):
         h5_data_path = os.path.join(output_dir, f"{base_name}.h5")
@@ -301,23 +324,35 @@ def main():
         logging.info(f"Copied .oh5 file to: {h5_data_path}")
         data_path = h5_data_path
 
-    modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
     in_ang_path = os.path.join(output_dir, f"{base_name}.ang")
     out_ang_path = os.path.join(output_dir, f"{base_name}_modified.ang")
-    shutil.copy(data_path, modified_data_path)
-    logging.info(f"Copied HDF5 file to: {modified_data_path}")
+
+    #exit(-100)
+
+
 
     crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
-    debug = config.get("debug", False)
+
     desired_hkl = config.get("desired_hkl", "111")
 
     # Load dataset and optional cropping based on debug flag
     logging.info(f"Loading dataset from: {data_path}")
     s = kp.load(data_path, lazy=False)
+    iq = s.get_image_quality(normalize=True)  # Default
+
+    s.xmap.plot(
+        iq.ravel(),
+        cmap="gray",
+        colorbar=True,
+        colorbar_label="Image quality, $Q$",
+        remove_padding=True,
+    )
+    plt.show()
+    exit(-100)
 
     if debug:
         logging.info("Debug mode enabled: Cropping data for faster processing.")
-        s.crop(1, start=crop_start, end=crop_end)
+        s.crop(1, start=crop_start, end=crop_end+10)
         s.crop(0, start=crop_start, end=crop_end)
 
     # Setup detector and phase list based on material properties

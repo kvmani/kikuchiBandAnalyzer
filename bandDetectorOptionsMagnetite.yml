@@ -1,13 +1,14 @@
 # Configuration options for Kikuchi pattern and EBSD data processing
 
-h5_file_path: "C:/Users/kvman/Downloads/OneDrive_1_10-20-2024/magnetite_data.h5"  # Path to the .h5 EBSD dataset file
+#h5_file_path: "C:/Users/kvman/Downloads/OneDrive_1_10-20-2024/magnetite_data.h5"  # Path to the .h5 EBSD dataset file
+h5_file_path: "C:\\Users\\kvman\\Downloads\\New_regions\\New_regions\\big_grain.oh5"  # Path to the .h5 EBSD dataset file
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 15 # Ending index for cropping, used only in debug mode for faster processing
 debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs
 desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
-
+reorder_patterns_from_hdf: true ### make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
 # Configuration for phases in the EBSD data
 phase_list:
   name: "Ni"                 # Phase name, e.g., "Ni" for Nickel
@@ -33,8 +34,8 @@ pc: [0.54728, 0.7169, 0.6969]  # Pattern center for EBSD detector adjust this as
 # Kikuchi band width detection parameters
 smoothing_sigma: 2          # Sigma for Gaussian smoothing, affects edge sharpness; usually between 1-3
 strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangular_area" or others as per implementation
-#rectWidth: 50               # Width of the rectangle for detection; typical values are 30-60
-fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
+rectWidth: 40               # Width of the rectangle for detection; typical values are 30-60
+#fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
 min_psnr: 1.1               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
 
 plot_results: false         # Set to true if results should be plotted (for debugging/visualization purposes)
