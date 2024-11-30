@@ -1,14 +1,15 @@
 # Configuration options for Kikuchi pattern and EBSD data processing
 
 #h5_file_path: "C:/Users/kvman/Downloads/OneDrive_1_10-20-2024/magnetite_data.h5"  # Path to the .h5 EBSD dataset file
-h5_file_path: "C:\\Users\\kvman\\Downloads\\New_regions\\New_regions\\big_grain.oh5"  # Path to the .h5 EBSD dataset file
+#h5_file_path: "C:\\Users\\kvman\\Downloads\\New_regions\\New_regions\\big_grain.oh5"  # Path to the .h5 EBSD dataset file
+h5_file_path: "C:\\Users\\kvman\\Downloads\\magnetite_data_coarsened.oh5"
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 15 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
 desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
-skip_ang_processing: true
+skip_ang_processing: false
 #reorder_patterns_from_hdf: true ### make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
 # Configuration for phases in the EBSD data
 phase_list:
