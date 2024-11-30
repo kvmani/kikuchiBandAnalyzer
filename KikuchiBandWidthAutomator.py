@@ -298,7 +298,6 @@ def main():
 
     # Create a backup of the original file
 
-
     # Copy the backup to a temp file for modifications
     modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
 
@@ -336,19 +335,19 @@ def main():
     desired_hkl = config.get("desired_hkl", "111")
 
     # Load dataset and optional cropping based on debug flag
-    logging.info(f"Loading dataset from: {data_path}")
+    # logging.info(f"Loading dataset from: {data_path}")
     s = kp.load(data_path, lazy=False)
-    iq = s.get_image_quality(normalize=True)  # Default
-
-    s.xmap.plot(
-        iq.ravel(),
-        cmap="gray",
-        colorbar=True,
-        colorbar_label="Image quality, $Q$",
-        remove_padding=True,
-    )
-    plt.show()
-    exit(-100)
+    # iq = s.get_image_quality(normalize=True)  # Default
+    #
+    # s.xmap.plot(
+    #     iq.ravel(),
+    #     cmap="gray",
+    #     colorbar=True,
+    #     colorbar_label="Image quality, $Q$",
+    #     remove_padding=True,
+    # )
+    # plt.show()
+    # exit(-100)
 
     if debug:
         logging.info("Debug mode enabled: Cropping data for faster processing.")
@@ -401,6 +400,7 @@ def main():
     filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
     save_results_to_excel(processed_results, output_excel_path,filtered_excel_path)
 
+
     df = pd.read_excel(filtered_excel_path)
     if "Band Width" not in df.columns:
         logging.error("Band Width column not found in filtered_band_data.xlsx.")
@@ -434,24 +434,25 @@ def main():
         band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
         elastic_modulus = float(config["elastic_modulus"])
         band_stress_array = band_strain_array * elastic_modulus
-        angInputDict = {"IQ":band_width_array, "PRIAS_Bottom_Strip":band_strain_array,
-                        "PRIAS_Center_Square":band_stress_array,
-                        "PRIAS_Top_Strip":psnr_array,
-                        }
+        if not config["skip_ang_processing"]:
+            angInputDict = {"IQ":band_width_array, "PRIAS_Bottom_Strip":band_strain_array,
+                            "PRIAS_Center_Square":band_stress_array,
+                            "PRIAS_Top_Strip":psnr_array,
+                            }
 
-        ut.modify_ang_file(in_ang_path, "band_width", IQ=band_width_array)
-        ut.modify_ang_file(in_ang_path, "strain", IQ=band_strain_array)
-        ut.modify_ang_file(in_ang_path, "stress", IQ=band_stress_array)
-        ut.modify_ang_file(in_ang_path, "psnr", IQ=psnr_array)
+            ut.modify_ang_file(in_ang_path, "band_width", IQ=band_width_array)
+            ut.modify_ang_file(in_ang_path, "strain", IQ=band_strain_array)
+            ut.modify_ang_file(in_ang_path, "stress", IQ=band_stress_array)
+            ut.modify_ang_file(in_ang_path, "psnr", IQ=psnr_array)
 
-        logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
+            logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
 
         logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
-    logging.info("Process completed. Results saved to Excel files and modified .ang file.")
+        logging.info("Process completed. Results saved to Excel files and modified .ang file.")
 
     end_time = time.time()  # End timing
     logging.info(f"The total processing time is : {end_time - start_time} seconds")

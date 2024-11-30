@@ -7,7 +7,7 @@ debug: true      # Set to true for enabling debug mode; this crops the dataset f
 desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
-reorder_patterns_from_hdf: true # make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
+#reorder_patterns_from_hdf: true # make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
 # Configuration for phases in the EBSD data
 phase_list:
   name: "Ni"                 # Phase name, e.g., "Ni" for Nickel
