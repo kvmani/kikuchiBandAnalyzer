@@ -105,6 +105,7 @@ class RectangularAreaBandDetector:
         self.hkl = hkl
         self.debug = config.get('debug', False)
         self.plot_band_detection=config.get('plot_band_detection',False)
+        self.plot_band_detection_condition=config.get('plot_band_detection_condition',"False")
         self.psnr = 0
         self.band_valid=False
 
@@ -211,9 +212,14 @@ class RectangularAreaBandDetector:
             self.band_width = 0
             self.band_valid = False
             logging.debug("Band width detection failed.")
-        if self.plot_band_detection:
+
+        if self.plot_band_detection or eval(self.plot_band_detection_condition):
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
+
+        # if self.plot_band_detection:
+        #     self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
+        #                     central_peak)
 
         # self.band_valid=band_valid
         # self.psnr=psnr

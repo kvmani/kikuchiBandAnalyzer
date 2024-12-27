@@ -40,5 +40,4 @@ rectWidth: 40               # Width of the rectangle for detection; typical valu
 #fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
 min_psnr: 1.1               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
 
-plot_results: false         # Set to true if results should be plotted (for debugging/visualization purposes)
 plot_band_detection: false
