@@ -77,7 +77,7 @@ class BandDetector:
         logging.info(f"Image loaded from {image_path}.")
         return self._ensure_grayscale(image)
 
-    def _load_config(self, config_path="bandDetectorOptions.yml"):
+    def _load_config(self, config_path="bandDetectorOptionsMagnetite.yml"):
         """
         Loads configuration from a YAML file.
         :param config_path: Path to the YAML configuration file.
@@ -220,7 +220,7 @@ def process_kikuchi_images(ebsd_data, json_input, desired_hkl='111', config=None
         logging.info(f"Completed serial processing in {serial_duration:.2f} seconds.")
 
     return processed_data
-def load_config(file_path="bandDetectorOptions.yml"):
+def load_config(file_path="bandDetectorOptionsMagnetite.yml"):
     """
     Loads configuration options from a YAML file.
 

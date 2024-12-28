@@ -1,6 +1,6 @@
 # Configuration options for Kikuchi pattern and EBSD data processing
 
-h5_file_path: "C:/Users/kvman/Downloads/IS_Ni_ebsd_data/Nickel.h5"  # Path to the .h5 EBSD dataset file
+h5_file_path: "E:/Debarna_LRS/Automation/coarsened data sets/nickel 2 coarsened.oh5"  # Path to the .h5 EBSD dataset file
 crop_start: 25     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 50 # Ending index for cropping, used only in debug mode for faster processing
 debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs

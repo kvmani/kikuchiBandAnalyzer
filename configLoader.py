@@ -1,7 +1,7 @@
 import yaml
 
 
-def load_config(config_path="bandDetectorOptions.yml"):
+def load_config(config_path="bandDetectorOptionsMagnetite.yml"):
     """
     Loads configuration from a YAML file.
     :param config_path: Path to the YAML configuration file.

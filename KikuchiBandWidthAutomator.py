@@ -386,9 +386,6 @@ def main():
     s.plot(maps_nav_rgb)
     plt.show()
 
-    #exit(-200)
-
-
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
     processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl, config=config)
@@ -434,10 +431,10 @@ def main():
                         "PRIAS_Top_Strip":psnr_array,
                         }
 
-        ut.modify_ang_file(in_ang_path, "band_width", IQ=band_width_array)
-        ut.modify_ang_file(in_ang_path, "strain", IQ=band_strain_array)
-        ut.modify_ang_file(in_ang_path, "stress", IQ=band_stress_array)
-        ut.modify_ang_file(in_ang_path, "psnr", IQ=psnr_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
 
         logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
