@@ -18,11 +18,14 @@ class EBSDProcessor:
 
     def export_images(self):
         options = self.config["options"]
-        dataset_path = self.config["dataset_path"]
+        #dataset_path = self.config["dataset_path"]
         output_dir = Path(self.config["output_dir"])
         hdf5_file_path = self.config["hdf5_file_path"]
 
         with h5py.File(hdf5_file_path, 'r') as hdf:
+            target_dataset_name = next(name for name in hdf if name not in ["Manufacturer", "Version"])
+            dataset_path = f"{target_dataset_name}/EBSD/Data/Pattern"
+
             data = hdf[dataset_path][()]
             N, m, n = data.shape
 
@@ -59,13 +62,20 @@ class EBSDProcessor:
     def modify_hdf5(self, new_array):
         hdf5_file_path = Path(self.config["hdf5_file_path"])
         output_path = hdf5_file_path.with_name(f"{hdf5_file_path.stem}_AI_modified.h5")
-        dataset_path = self.config["dataset_path"]
 
         if output_path.exists():
             logging.warning(f"Overwriting existing file: {output_path}")
 
         shutil.copy(hdf5_file_path, output_path)
+
+
+        #dataset_path = self.config["dataset_path"]
+
+
         with h5py.File(output_path, "a") as hdf:
+            target_dataset_name = next(name for name in hdf if name not in ["Manufacturer", "Version"])
+            dataset_path = f"{target_dataset_name}/EBSD/Data/Pattern"
+
             if dataset_path in hdf:
                 del hdf[dataset_path]
             hdf.create_dataset(dataset_path, data=new_array)
@@ -113,7 +123,7 @@ if __name__ == "__main__":
     # Configuration dictionary with your provided values
     config = {
         "hdf5_file_path": "C:\\Users\\kvman\\Downloads\\magnetite_data_coarsened.oh5",
-        "dataset_path": "magnetite data coarsened coarsened/EBSD/Data/Pattern",
+        #"dataset_path": "magnetite data coarsened coarsened/EBSD/Data/Pattern",
         "output_dir": "exported_images/magnetite_data_coarsened",
         "processed_image_dir": (r"C:\Users\kvman\PycharmProjects\pytorch-CycleGAN-and-pix2pix"
                                 r"\debarna_test\cyclegan_kikuchi_model_weights"
@@ -123,7 +133,7 @@ if __name__ == "__main__":
         "stage": "reconstruct",  # "export" or "reconstruct"
         "options": {
             "base_name": "magnetite_data_coarsened",
-            "index_format": "%05d",
+            "index_format": "%06d",
             "file_extension": ".png",
             "convert_to_8bit": True,
             "convert_back_to_16bit": True,
@@ -133,16 +143,20 @@ if __name__ == "__main__":
 
     config = {
         "hdf5_file_path": r"C:\Users\kvman\Documents\ml_data\debarnaData\strain_transpose_coarsened_coarsened.oh5",
-        "dataset_path": "strain_transpose coarsened coarsened/EBSD/Data/Pattern",
-        "output_dir": "exported_images/28_12_24_magnetite_data_coarsened",
+        #"dataset_path": "strain_transpose coarsened coarsened/EBSD/Data/Pattern", #### copy from inside .oh5 file
+        "output_dir": "exported_images/30_12_24_magnetite_data_coarsened",
+        ### below variable is for path of the ML processed image data folder only. to be added in "reconstruction" phase of this code. ignored in case of "export" stage
         "processed_image_dir": r"C:\Users\kvman\PycharmProjects\pytorch-CycleGAN-and-pix2pix"
                                r"\debarna_magnetite_28_12_24_coarsened_AI\cyclegan_kikuchi_model_weights"
                                r"\sim_kikuchi_no_preprocess_lr2e-4_decay_400\test_latest\images",
-        "image_shape": (12463, 230, 230),  # Example shape (adjust based on data)
+
+        "image_shape": (12463, 230, 230),  # (number of patterns, 230, 230) can be seen from .oh5 file @ EBSD/Data/Pattern
         "stage": "reconstruct",  # "export" or "reconstruct"
+
+        #### dont change any thing below
         "options": {
-            "base_name": "28_12_24_magnetite_coarsened",
-            "index_format": "%05d",
+            "base_name": "EBSP_",
+            "index_format": "%06d",
             "file_extension": ".png",
             "convert_to_8bit": True,
             "convert_back_to_16bit": True,

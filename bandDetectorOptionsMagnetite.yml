@@ -4,13 +4,12 @@
 #h5_file_path: "C:\\Users\\kvman\\Downloads\\New_regions\\New_regions\\big_grain.oh5"  # Path to the .h5 EBSD dataset file
 #h5_file_path: "C:\\Users\\kvman\\Downloads\\magnetite_data_coarsened.oh5"
 #h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpose_coarsened_coarsened.oh5"
-#h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpose_coarsened_coarsened_AI_modified.h5"
-h5_file_path: "E:\\Debarna_LRS\\26-12_new_data\\to_mani_sir\\coarsened_coarsened_AI_processed\\strain_transpose_coarsened_coarsened_AI_modified.h5"
+h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpose_coarsened_coarsened_AI_modified.h5"
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 15 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
 #desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
-desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "022"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
 skip_ang_processing: false
@@ -39,7 +38,7 @@ smoothing_sigma: 2          # Sigma for Gaussian smoothing, affects edge sharpne
 strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangular_area" or others as per implementation
 rectWidth: 40               # Width of the rectangle for detection; typical values are 30-60
 #fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
-min_psnr: 1.1               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
+min_psnr: 2.0               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
 
-plot_band_detection: false
+plot_band_detection: false # true or false
 #plot_band_detection_condition: "self.band_width > 20 or self.band_width < 14"
