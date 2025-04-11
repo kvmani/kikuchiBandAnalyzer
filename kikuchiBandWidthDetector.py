@@ -1,3 +1,4 @@
+import copy
 import logging
 import json
 import cv2
@@ -337,32 +338,136 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_ex
     df_grouped = df_filtered.loc[df_filtered.groupby('Ind')['psnr'].idxmax()]
     df_grouped.to_excel(filtered_excel_path, index=False, engine='openpyxl')
 
+from PIL import Image
+import numpy as np
+import os, math, logging
+
+def load_ebsd_data(source: str,
+                   tile_rows: int = 10,
+                   tile_cols: int = 10) -> np.ndarray:
+    """
+    • If `source` is a folder  →  load all PNGs (same as before).
+    • If `source` is a *.npy file:
+        – if the array is 2‑D (h,w)  →  tile it to (tile_rows,tile_cols,h,w)
+        – if already 4‑D            →  return as‑is.
+    """
+
+    # ── Folder of PNGs ───────────────────────────────────────────────
+    if os.path.isdir(source):
+        png_files = sorted([os.path.join(source, f)
+                            for f in os.listdir(source)
+                            if f.lower().endswith(".png")])
+        if not png_files:
+            raise FileNotFoundError("No *.png files in the folder.")
+
+        # read first image to fix size & dtype
+        with Image.open(png_files[0]) as im:
+            im = im.convert("L")
+            ref = np.asarray(im)
+        h, w = ref.shape
+        if h != w:
+            raise ValueError("PNG patterns must be square.")
+        imgs = [ref]
+        for path in png_files[1:]:
+            with Image.open(path) as im:
+                arr = np.asarray(im.convert("L"))
+            if arr.shape != (h, w):
+                raise ValueError(f"{path} has shape {arr.shape}, expected {(h,w)}.")
+            imgs.append(arr)
+
+        n = len(imgs)
+        rows = math.floor(math.sqrt(n))
+        cols = math.ceil(n / rows)
+        if cols - rows > 1:
+            rows, cols = cols, rows
+        pad = rows*cols - n
+        if pad:
+            imgs.extend([np.zeros((h, w), dtype=ref.dtype)] * pad)
+
+        ebsd_data = np.stack(imgs).reshape(rows, cols, h, w)
+        logging.info(f"Loaded {n} PNG patterns → grid {rows}×{cols}.")
+        return ebsd_data
+
+    # ── .npy file ────────────────────────────────────────────────────
+    if not source.lower().endswith(".npy"):
+        raise ValueError("source must be a folder or a *.npy file.")
+
+    arr = np.load(source)
+    if arr.ndim == 4:                         # already tiled
+        logging.info(f"Loaded EBSD data {arr.shape} from {source}.")
+        return arr
+    if arr.ndim == 2:                         # single pattern → tile
+        h, w = arr.shape
+        tiled = np.tile(arr, (tile_rows, tile_cols, 1, 1))
+        logging.info(
+            f"Tiled single pattern {h}×{w} to {tile_rows}×{tile_cols} grid.")
+        return tiled
+
+    raise ValueError("Loaded .npy must be 2‑D or 4‑D.")
+def prepare_json_input(json_path: str,
+                       n_patterns: int,
+                       tile_from_single: bool = False):
+    """
+    Return a flat list of JSON dictionaries with length == n_patterns.
+
+    * When `tile_from_single` is True  →  deep‑copy the first entry
+      repeatedly (for the legacy *.npy route).
+
+    * Otherwise                       →  load the file and **validate**
+      that it already contains `n_patterns` items.
+    """
+    with open(json_path) as f:
+        data = json.load(f)
+
+    if tile_from_single:                       # .npy case
+        base = data[0] if isinstance(data, list) else data
+        return [copy.deepcopy(base) for _ in range(n_patterns)]
+
+    # folder‑mode: expect ready‑made list
+    if not isinstance(data, list):
+        raise TypeError("JSON must be a list when loading from folder.")
+
+    if len(data) != n_patterns:
+        raise ValueError(
+            f"JSON has {len(data)} entries, but {n_patterns} patterns "
+            f"are loaded.  They must match 1:1.")
+    return data
+
 
 if __name__ == "__main__":
-    # Load configuration from YAML file
     config = load_config()
 
-    # Load EBSD data
-    ebsd_data = np.load('real_kikuchi.npy')
+    # ----------------------------------------------------------------
+    # Select *either* a .npy file *or* a folder containing PNGs
+    # ----------------------------------------------------------------
+    SOURCE = "real_kikuchi.npy"  # old route
+    # SOURCE = "patterns_folder"        # new route
 
-    ebsd_data = np.tile(ebsd_data, (50, 50, 1, 1))  # Example setup, adjust as needed
+    ebsd_data = load_ebsd_data(SOURCE, tile_rows=10, tile_cols=10)
+    rows, cols = ebsd_data.shape[:2]
+    n_patterns = rows * cols
 
-    # Load JSON input data
-    with open("bandInputData.json", "r") as json_file:
-        json_input = json.load(json_file)
-    json_input = [[json_input[0] for _ in range(ebsd_data.shape[1])] for _ in range(ebsd_data.shape[0])]
+    # ----------------------------------------------------------------
+    # JSON handling
+    # ----------------------------------------------------------------
+    if SOURCE.lower().endswith(".npy"):
+        json_input = prepare_json_input(
+            "bandInputData.json",
+            n_patterns,
+            tile_from_single=True  # deep‑copy first entry
+        )
+    else:  # folder route
+        json_input = prepare_json_input(
+            "bandInputData.json",
+            n_patterns,
+            tile_from_single=False  # expect full list
+        )
 
-    # Retrieve desired_hkl from configuration or default to '111'
-    desired_hkl = config.get("desired_hkl", "111")
-
-    # Process the EBSD data and corresponding bands, based on config settings
     processed_results = process_kikuchi_images(
-        ebsd_data,
-        json_input,
-        desired_hkl=desired_hkl,
-        config=config  # Pass the full configuration dictionary
-    )
+            ebsd_data,
+            json_input,
+            desired_hkl=config.get("desired_hkl", "111"),
+            config=config,
+        )
 
-    # Save the results to Excel
     save_results_to_excel(processed_results, "bandOutputData.xlsx")
-    logging.info("Processing and saving of results complete.")
