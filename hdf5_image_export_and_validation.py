@@ -121,25 +121,7 @@ class EBSDProcessor:
 
 if __name__ == "__main__":
     # Configuration dictionary with your provided values
-    config = {
-        "hdf5_file_path": "C:\\Users\\kvman\\Downloads\\magnetite_data_coarsened.oh5",
-        #"dataset_path": "magnetite data coarsened coarsened/EBSD/Data/Pattern",
-        "output_dir": "exported_images/magnetite_data_coarsened",
-        "processed_image_dir": (r"C:\Users\kvman\PycharmProjects\pytorch-CycleGAN-and-pix2pix"
-                                r"\debarna_test\cyclegan_kikuchi_model_weights"
-                                r"\sim_kikuchi_no_preprocess_lr2e-4_decay_400\test_latest\images"),
-        "image_shape": (100, 200, 200),  # Example shape (adjust based on data)
-        #"stage": "export",  # "export" or "reconstruct"
-        "stage": "reconstruct",  # "export" or "reconstruct"
-        "options": {
-            "base_name": "magnetite_data_coarsened",
-            "index_format": "%06d",
-            "file_extension": ".png",
-            "convert_to_8bit": True,
-            "convert_back_to_16bit": True,
-            "skip_image_export": True,
-        }
-    }
+
 
     config = {
         "hdf5_file_path": r"C:\Users\kvman\Documents\ml_data\debarnaData\strain_transpose_coarsened_coarsened.oh5",
@@ -151,7 +133,7 @@ if __name__ == "__main__":
                                r"\sim_kikuchi_no_preprocess_lr2e-4_decay_400\test_latest\images",
 
         "image_shape": (12463, 230, 230),  # (number of patterns, 230, 230) can be seen from .oh5 file @ EBSD/Data/Pattern
-        "stage": "reconstruct",  # "export" or "reconstruct"
+        "stage": "export",  # "export" or "reconstruct"
 
         #### dont change any thing below
         "options": {
