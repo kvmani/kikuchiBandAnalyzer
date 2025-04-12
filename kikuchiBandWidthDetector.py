@@ -342,37 +342,57 @@ from PIL import Image
 import numpy as np
 import os, math, logging
 
+from PIL import Image
+import numpy as np
+import os, math, logging
+
+
+def _square_pattern(arr: np.ndarray, tol: float = 0.95) -> np.ndarray:
+    """Return a square version of *arr* (2‑D).  See previous answer for details."""
+    h, w = arr.shape
+    if h == w:
+        return arr
+
+    ratio = min(h, w) / max(h, w)
+    if ratio < tol:
+        raise ValueError(f"Pattern {h}×{w} too far from square (ratio {ratio:.3f}).")
+
+    target = max(h, w)
+    logging.warning(f"Pattern {h}×{w} not square; resizing to {target}×{target}.")
+    return cv2.resize(arr, (target, target), interpolation=cv2.INTER_NEAREST)
+
+
+
 def load_ebsd_data(source: str,
                    tile_rows: int = 10,
                    tile_cols: int = 10) -> np.ndarray:
     """
-    • If `source` is a folder  →  load all PNGs (same as before).
-    • If `source` is a *.npy file:
-        – if the array is 2‑D (h,w)  →  tile it to (tile_rows,tile_cols,h,w)
-        – if already 4‑D            →  return as‑is.
+    • Folder            → load all *.png / *.bmp files.
+    • Single PNG or BMP → load, square‑pad/‑resize if needed, tile.
+    • .npy              → 2‑D (tile) or 4‑D (return as‑is).
     """
+    IMG_EXT = (".png", ".bmp")  # allowed image extensions (lower‑case)
 
-    # ── Folder of PNGs ───────────────────────────────────────────────
+    # ── Folder of images ────────────────────────────────────────────
     if os.path.isdir(source):
-        png_files = sorted([os.path.join(source, f)
+        img_files = sorted([os.path.join(source, f)
                             for f in os.listdir(source)
-                            if f.lower().endswith(".png")])
-        if not png_files:
-            raise FileNotFoundError("No *.png files in the folder.")
+                            if f.lower().endswith(IMG_EXT)])
+        if not img_files:
+            raise FileNotFoundError("No *.png or *.bmp files in the folder.")
 
-        # read first image to fix size & dtype
-        with Image.open(png_files[0]) as im:
-            im = im.convert("L")
-            ref = np.asarray(im)
-        h, w = ref.shape
-        if h != w:
-            raise ValueError("PNG patterns must be square.")
+        # read first image to set reference size / dtype
+        with Image.open(img_files[0]) as im:
+            ref = _square_pattern(np.asarray(im.convert("L")))
+        h = w = ref.shape[0]
         imgs = [ref]
-        for path in png_files[1:]:
+
+        for path in img_files[1:]:
             with Image.open(path) as im:
-                arr = np.asarray(im.convert("L"))
+                arr = _square_pattern(np.asarray(im.convert("L")))
             if arr.shape != (h, w):
-                raise ValueError(f"{path} has shape {arr.shape}, expected {(h,w)}.")
+                raise ValueError(f"{path} became {arr.shape}, "
+                                 f"expected {(h, w)} after squaring.")
             imgs.append(arr)
 
         n = len(imgs)
@@ -380,30 +400,44 @@ def load_ebsd_data(source: str,
         cols = math.ceil(n / rows)
         if cols - rows > 1:
             rows, cols = cols, rows
-        pad = rows*cols - n
+        pad = rows * cols - n
         if pad:
             imgs.extend([np.zeros((h, w), dtype=ref.dtype)] * pad)
 
         ebsd_data = np.stack(imgs).reshape(rows, cols, h, w)
-        logging.info(f"Loaded {n} PNG patterns → grid {rows}×{cols}.")
+        logging.info(f"Loaded {n} patterns → grid {rows}×{cols}.")
         return ebsd_data
 
-    # ── .npy file ────────────────────────────────────────────────────
-    if not source.lower().endswith(".npy"):
-        raise ValueError("source must be a folder or a *.npy file.")
-
-    arr = np.load(source)
-    if arr.ndim == 4:                         # already tiled
-        logging.info(f"Loaded EBSD data {arr.shape} from {source}.")
-        return arr
-    if arr.ndim == 2:                         # single pattern → tile
-        h, w = arr.shape
+    # ── Single PNG or BMP file ──────────────────────────────────────
+    if os.path.isfile(source) and source.lower().endswith(IMG_EXT):
+        with Image.open(source) as im:
+            arr = _square_pattern(np.asarray(im.convert("L")))
+        h = w = arr.shape[0]
         tiled = np.tile(arr, (tile_rows, tile_cols, 1, 1))
-        logging.info(
-            f"Tiled single pattern {h}×{w} to {tile_rows}×{tile_cols} grid.")
+        logging.info(f"Loaded single image {source} {h}×{w} → "
+                     f"{tile_rows}×{tile_cols} grid.")
         return tiled
 
-    raise ValueError("Loaded .npy must be 2‑D or 4‑D.")
+    # ── .npy file ───────────────────────────────────────────────────
+    if source.lower().endswith(".npy"):
+        arr = np.load(source)
+        if arr.ndim == 4:  # already tiled
+            logging.info(f"Loaded EBSD data {arr.shape} from {source}.")
+            return arr
+        if arr.ndim == 2:  # single pattern → tile
+            arr = _square_pattern(arr)
+            h = w = arr.shape[0]
+            tiled = np.tile(arr, (tile_rows, tile_cols, 1, 1))
+            logging.info(
+                f"Tiled single pattern {h}×{w} to {tile_rows}×{tile_cols} grid.")
+            return tiled
+        raise ValueError("Loaded .npy must be 2‑D or 4‑D.")
+
+    # ----------------------------------------------------------------
+    raise ValueError("source must be a folder, a *.png / *.bmp file, or a *.npy file.")
+
+
+
 def prepare_json_input(json_path: str,
                        n_patterns: int,
                        tile_from_single: bool = False):
@@ -435,24 +469,26 @@ def prepare_json_input(json_path: str,
 
 
 if __name__ == "__main__":
-    config = load_config()
+    config = load_config("sumitBandDetectorOptions.yml")
 
     # ----------------------------------------------------------------
     # Select *either* a .npy file *or* a folder containing PNGs
     # ----------------------------------------------------------------
     SOURCE = "real_kikuchi.npy"  # old route
+    SOURCE = r"C:\Users\kvman\Downloads\Center\Center\1.bmp"  # old route
+    jsonFile = r"C:\Users\kvman\Downloads\Center\Center\1.json"
     # SOURCE = "patterns_folder"        # new route
 
-    ebsd_data = load_ebsd_data(SOURCE, tile_rows=10, tile_cols=10)
+    ebsd_data = load_ebsd_data(SOURCE, tile_rows=1, tile_cols=1)
     rows, cols = ebsd_data.shape[:2]
     n_patterns = rows * cols
 
     # ----------------------------------------------------------------
     # JSON handling
     # ----------------------------------------------------------------
-    if SOURCE.lower().endswith(".npy"):
+    if SOURCE.lower().endswith(".npy") or SOURCE.lower().endswith(".png") or SOURCE.lower().endswith(".bmp"):
         json_input = prepare_json_input(
-            "bandInputData.json",
+            jsonFile,
             n_patterns,
             tile_from_single=True  # deep‑copy first entry
         )
@@ -466,8 +502,8 @@ if __name__ == "__main__":
     processed_results = process_kikuchi_images(
             ebsd_data,
             json_input,
-            desired_hkl=config.get("desired_hkl", "111"),
+            desired_hkl=config.get("desired_hkl", "002"),
             config=config,
         )
 
-    save_results_to_excel(processed_results, "bandOutputData.xlsx")
+    save_results_to_excel(processed_results, "sumit_bandOutputData.xlsx")

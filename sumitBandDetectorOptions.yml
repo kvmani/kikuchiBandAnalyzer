@@ -1,0 +1,45 @@
+# Configuration options for Kikuchi pattern and EBSD data processing
+
+#h5_file_path: "C:/Users/kvman/Downloads/OneDrive_1_10-20-2024/magnetite_data.h5"  # Path to the .h5 EBSD dataset file
+#h5_file_path: "C:\\Users\\kvman\\Downloads\\New_regions\\New_regions\\big_grain.oh5"  # Path to the .h5 EBSD dataset file
+#h5_file_path: "C:\\Users\\kvman\\Downloads\\magnetite_data_coarsened.oh5"
+#h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpose_coarsened_coarsened.oh5"
+h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpose_coarsened_coarsened_AI_modified.h5"
+crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
+crop_end: 15 # Ending index for cropping, used only in debug mode for faster processing
+debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs
+#desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl_ref_width: 12
+elastic_modulus: 205e9 # 205 GPa
+skip_ang_processing: true
+#reorder_patterns_from_hdf: true ### make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
+# Configuration for phases in the EBSD data
+phase_list:
+  name: "Fe"                 # Phase name, e.g., "Ni" for Nickel
+  space_group: 229           # Space group number for the crystal structure
+  lattice: [2.86, 2.86, 2.86, 90, 90, 90]  # Lattice parameters: a, b, c, alpha, beta, gamma
+  atoms:                      # List of atoms in the structure
+    - element: "X"           # Element symbol
+      position: [0, 0, 0]     # Atom Positions in the unit cell
+    - element: "Y"
+      position: [0.5, 0.5, 0.5]
+
+# List of HKL indices for Kikuchi line detection
+hkl_list:
+  - [1, 1, 0] ## put all the fundamental reflectors of the phase here. if your system is FCC no need to modify this list.
+  - [2, 0, 0]
+  - [1, 1, 2]
+  - [2, 2, 0]
+  - [3, 1, 0]
+
+
+# Kikuchi band width detection parameters
+smoothing_sigma: 2          # Sigma for Gaussian smoothing, affects edge sharpness; usually between 1-3
+strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangular_area" or others as per implementation
+rectWidth: 150               # Width of the rectangle for detection; typical values are 30-60
+#fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
+min_psnr: 1.5               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
+
+plot_band_detection: true # true or false
+#plot_band_detection_condition: "self.band_width > 20 or self.band_width < 14"

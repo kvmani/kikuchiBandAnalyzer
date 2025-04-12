@@ -366,7 +366,8 @@ class RectangularAreaBandDetector:
         :return: Sampled intensity profile and scaling factor.
         """
         num_rows = upright_rectangle.shape[0]  # Sampling across the width of the band (which is now vertical)
-        num_columns = 200  # Sampling along the length of the band
+        #num_columns = 200  # Sampling along the length of the band
+        num_columns = self.config["rectWidth"]*4  # Sampling along the length of the band
 
         # Calculate the scaling factor (since the width is resized)
         original_width = upright_rectangle.shape[1]  # Original width
@@ -405,8 +406,6 @@ class RectangularAreaBandDetector:
         self.scaling_factor = scaling_factor
 
         return resized_image
-
-
 
     def detect_edges(self, profile):
         """
@@ -593,27 +592,25 @@ class RectangularAreaBandDetector:
 
         ax[1, 1].plot(summed_profile, label='Summed Intensity')
 
-        # if band_start is not None and band_end is not None:
-        #     ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')
-        #     ax[1, 1].axvline(x=band_end, color='r', linestyle='--', label='Band End')
-        #
-        # if central_peak is not None:
-        #     ax[1, 1].axvline(x=central_peak, color='b', linestyle=':', label='Central Peak')
-        #
-        # # Set the title with hkl, bandwidth, PSNR, and validity information
-        # ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\n"
-        #                    f"BandWidth={self.band_width} \n PSNR={np.around(self.psnr, 2)}\n "
-        #                    f"valid? {self.band_valid}")
+        if band_start is not None and band_end is not None:
+            ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')
+            ax[1, 1].axvline(x=band_end, color='r', linestyle='--', label='Band End')
 
-        # Set X and Y axis labels
-        # ax[1, 1].set_xlabel("Distance in pixels (px)")
-        # ax[1, 1].set_ylabel("Summed Intensity Profile (arb. units)")
+        if central_peak is not None:
+            ax[1, 1].axvline(x=central_peak, color='b', linestyle=':', label='Central Peak')
+
+        # Set the title with hkl, bandwidth, PSNR, and validity information
+        ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\n"
+                           f"BandWidth={self.band_width} \n PSNR={np.around(self.psnr, 2)}\n "
+                           f"valid? {self.band_valid}")
+
+
         #
-        # # Enable major and minor ticks for both axes
-        # ax[1, 1].xaxis.set_major_locator(ticker.MultipleLocator(20))  # Adjust as needed
-        # ax[1, 1].xaxis.set_minor_locator(ticker.MultipleLocator(5))  # Adjust as needed
-        # ax[1, 1].yaxis.set_major_locator(ticker.MultipleLocator(1e6))  # Adjust based on intensity scale
-        # ax[1, 1].yaxis.set_minor_locator(ticker.MultipleLocator(2e5))  # Adjust for better granularity
+        # Enable major and minor ticks for both axes
+        ax[1, 1].xaxis.set_major_locator(ticker.MultipleLocator(20))  # Adjust as needed
+        ax[1, 1].xaxis.set_minor_locator(ticker.MultipleLocator(5))  # Adjust as needed
+        ax[1, 1].yaxis.set_major_locator(ticker.MultipleLocator(1e6))  # Adjust based on intensity scale
+        ax[1, 1].yaxis.set_minor_locator(ticker.MultipleLocator(2e5))  # Adjust for better granularity
         #
         # # Display legend
         # ax[1, 1].legend()
