@@ -2,11 +2,8 @@ import copy
 import logging
 import json
 import cv2
-import numpy as np
 import yaml
 from tqdm import tqdm
-import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 
 from strategies import RectangularAreaBandDetector
@@ -469,14 +466,20 @@ def prepare_json_input(json_path: str,
 
 
 if __name__ == "__main__":
-    config = load_config("sumitBandDetectorOptions.yml")
+    #config = load_config("sumitBandDetectorOptions.yml")
+    config = load_config("bandDetectorOptions.yml")
 
     # ----------------------------------------------------------------
     # Select *either* a .npy file *or* a folder containing PNGs
     # ----------------------------------------------------------------
-    SOURCE = "real_kikuchi.npy"  # old route
-    SOURCE = r"C:\Users\kvman\Downloads\Center\Center\1.bmp"  # old route
-    jsonFile = r"C:\Users\kvman\Downloads\Center\Center\1.json"
+    #SOURCE = "real_kikuchi.npy"  # old route
+    #SOURCE = r"C:\Users\kvman\Downloads\Center\Center\1.bmp"  # old route
+    #SOURCE = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\ML_1X1Patterns\ML_1X1Patterns\Med_Mn_10k_1x1_00507.png"  # 1X1RAW
+    SOURCE = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\ML_4x4Patterns\ML_4x4Patterns\Med_Mn_10k_4x4_00995.png" # 4X4Raw
+    #SOURCE = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\inference_testing_MLOutput\Med_Mn_10k_4x4_00995_out.png" # 1X1ML
+    #jsonFile = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\ML_1X1Patterns\ML_1X1Patterns\single_Med_Mn_10k_1x1.json"
+    #jsonFile = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\inference_testing_MLOutput\SingleMed_Mn_10k_4x4_00995_out.json"
+    jsonFile = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\inference_testing_MLOutput\SingleMed_Mn_10k_4x4_00995.json"
     # SOURCE = "patterns_folder"        # new route
 
     ebsd_data = load_ebsd_data(SOURCE, tile_rows=1, tile_cols=1)

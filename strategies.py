@@ -590,7 +590,7 @@ class RectangularAreaBandDetector:
         # ax[1, 1].legend()
         import matplotlib.ticker as ticker  # Import ticker for minor ticks
 
-        ax[1, 1].plot(summed_profile, label='Summed Intensity')
+        #ax[1, 1].plot(summed_profile, label='Summed Intensity')
 
         if band_start is not None and band_end is not None:
             ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')
@@ -614,9 +614,14 @@ class RectangularAreaBandDetector:
         #
         # # Display legend
         # ax[1, 1].legend()
+        n = len(summed_profile)
+        x = np.arange(n)
+        y = summed_profile/summed_profile.max()
 
-
-        ax[1, 1].plot(summed_profile, label='Summed Intensity')
+        ax[1, 1].plot(x,y, label='Summed Intensity')
+        data = np.column_stack((x, y))
+        fileName = self.config["plot_data_export_file_name"]
+        np.savetxt(fileName, data, delimiter=',', header='x,y', comments='')
 
         # if band_start is not None and band_end is not None:
         #     # ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')
