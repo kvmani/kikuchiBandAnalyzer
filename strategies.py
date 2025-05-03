@@ -439,6 +439,8 @@ class RectangularAreaBandDetector:
                 smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
             right_min = smoothed_profile[right_min_index]
 
+
+
             # Step 5: Calculate the average of the left and right minima
             noise_average = (left_min + right_min) / 2
 
@@ -620,8 +622,12 @@ class RectangularAreaBandDetector:
 
         ax[1, 1].plot(x,y, label='Summed Intensity')
         data = np.column_stack((x, y))
-        fileName = self.config["plot_data_export_file_name"]
-        np.savetxt(fileName, data, delimiter=',', header='x,y', comments='')
+
+        fileName = self.config.get("plot_data_export_file_name", "").strip()
+
+        if fileName:  # check if filename is non-empty after stripping whitespace
+            np.savetxt(fileName, data, delimiter=',', header='x,y', comments='')
+
 
         # if band_start is not None and band_end is not None:
         #     # ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')

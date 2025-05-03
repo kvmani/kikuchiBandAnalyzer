@@ -289,8 +289,8 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 def main():
     # Load configuration
     start_time = time.time()
-    #config = load_config(file_path="bandDetectorOptions.yml")
-    config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
+    config = load_config(file_path="bandDetectorOptions.yml")
+    #config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
     #config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
     
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
