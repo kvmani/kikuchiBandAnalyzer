@@ -377,14 +377,16 @@ def main():
     markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=config["desired_hkl"])
     s.add_marker(markers, plot_marker=False, permanent=True)
     logging.info("Completed band identification for width estimation. Now starting the band width estimation!")
-    
-    v_ipf = Vector3d.xvector()
-    sym = xmap.phases[0].point_group
-    ckey = plot.IPFColorKeyTSL(sym, v_ipf)
-    rgb_x = ckey.orientation2color(xmap.rotations)
-    maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
-    s.plot(maps_nav_rgb)
-    plt.show()
+
+    skip_display_EBSDmap=config.get("skip_display_EBSDmap",False)
+    if not skip_display_EBSDmap:
+        v_ipf = Vector3d.xvector()
+        sym = xmap.phases[0].point_group
+        ckey = plot.IPFColorKeyTSL(sym, v_ipf)
+        rgb_x = ckey.orientation2color(xmap.rotations)
+        maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
+        s.plot(maps_nav_rgb)
+        plt.show()
 
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
@@ -393,56 +395,82 @@ def main():
     filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
     save_results_to_excel(processed_results, output_excel_path,filtered_excel_path)
 
+    # Modified section of your calling code after reading Excel:
     df = pd.read_excel(filtered_excel_path)
-    if "Band Width" not in df.columns:
-        logging.error("Band Width column not found in filtered_band_data.xlsx.")
-        return
-    logging.info("Loaded band_width and psnr data from Excel.")
 
-    # Open the copied HDF5 file and add the Band_Width data node
+    # Check columns
+    required_columns = ["Band Width", "psnr", "efficientlineIntensity", "Ind", "defficientlineIntensity"]
+    for col in required_columns:
+        if col not in df.columns:
+            logging.error(f"{col} column not found in filtered_band_data.xlsx.")
+            return
+    logging.info("Loaded band_width, psnr,defficientlineIntensity and efficientlineIntensity data from Excel.")
+
+    # Open the copied HDF5 file and add the data nodes
     with h5py.File(modified_data_path, "a") as h5file:
         target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
 
         ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
 
-        # Sanity check: Ensure the maximum index in the Ind column does not exceed the length of CI data
         max_index = df["Ind"].max()
         if max_index >= len(ci_data):
-            logging.error("Maximum index in 'Ind' column exceeds length of /Nickel/EBSD/Data/CI.")
+            logging.error("Maximum index in 'Ind' exceeds length of /Nickel/EBSD/Data/CI.")
             return
 
-        # Create a zero-initialized array of the same length as CI data for Band_Width
+        # Create zero-initialized arrays
         band_width_array = np.zeros_like(ci_data, dtype="float32")
         psnr_array = np.zeros_like(ci_data, dtype="float32")
+        efficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
+        defficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
 
-
-        # Fill band_width_array at positions specified by the Ind column in the Excel data
-        for idx, band_width, psnr in zip(df["Ind"], df["Band Width"], df["psnr"]):
+        # Populate arrays
+        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity in zip(df["Ind"], df["Band Width"], df["psnr"],
+                                                                 df["efficientlineIntensity"] , df["defficientlineIntensity"]):
             band_width_array[idx] = band_width
             psnr_array[idx] = psnr
+            efficientlineIntensity_array[idx] = efficientlineIntensity  # New line here
+            defficientlineIntensity_array[idx] = defficientlineIntensity  # New line here
 
-        # Create the new dataset for Band_Width with the filled values
         desired_hkl_ref_width = config["desired_hkl_ref_width"]
         band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
         elastic_modulus = float(config["elastic_modulus"])
         band_stress_array = band_strain_array * elastic_modulus
-        angInputDict = {"IQ":band_width_array, "PRIAS_Bottom_Strip":band_strain_array,
-                        "PRIAS_Center_Square":band_stress_array,
-                        "PRIAS_Top_Strip":psnr_array,
-                        }
 
+        angInputDict = {
+            "IQ": band_width_array,
+            "PRIAS_Bottom_Strip": band_strain_array,
+            "PRIAS_Center_Square": band_stress_array,
+            "PRIAS_Top_Strip": psnr_array,
+            "efficientlineIntensity": efficientlineIntensity_array ,  # Included here if needed
+            "defficientlineIntensity": efficientlineIntensity_array  # Included here if needed
+        }
+
+        # Modify the .ang file for efficientlineIntensity as well
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_defficientlineIntensity",
+                           IQ=defficientlineIntensity_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientlineIntensity",
+                           IQ=efficientlineIntensity_array)  # New addition
 
-        logging.info("Succesfully wrote band_width in IQ, strain in PRIAS_Bottom_Strip, stress in PRIAS_Center_Square, psnr in PRIAS_Top_Strip of modified ang file!!")
+        logging.info(
+            "Successfully wrote band_width, strain, stress, psnr, defficientlineIntensity and efficientlineIntensity in modified ang file!")
+
+        # Store datasets in HDF5
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/efficientlineIntensity",
+                              data=efficientlineIntensity_array)  # New dataset
+        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/defficientlineIntensity",
+                              data=defficientlineIntensity_array)  # New dataset
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
         h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
 
-        logging.info("Added Band_Width data to /Nickel/EBSD/Data/Band_Width in modified HDF5 file.")
+        logging.info("Added Band_Width, psnr, defficientlineIntensity, efficientlineIntensity data to HDF5 file.")
+
+
     logging.info("Process completed. Results saved to Excel files and modified .ang file.")
 
     end_time = time.time()  # End timing

@@ -108,6 +108,8 @@ class RectangularAreaBandDetector:
         self.plot_band_detection=config.get('plot_band_detection',False)
         self.plot_band_detection_condition=config.get('plot_band_detection_condition',"False")
         self.psnr = 0
+        self.efficientlineIntensity = 0
+        self.defficientlineIntensity = 0
         self.band_valid=False
 
 
@@ -176,39 +178,43 @@ class RectangularAreaBandDetector:
         """
         Detect the band using intensity profile in a rectangular area around the band.
         Correct the band width using the scaling factor and store it as a class attribute.
-        :return: Dictionary with bandWidth and success status.
+        :return: Dictionary with bandWidth, PSNR, efficientlineIntensity,defficientLineIntensity and success status.
         """
-        # Extract the rectangular region and sample the intensities
         x1, y1, x2, y2 = self.central_line
         trimmer = LineTrimmer(self.image.shape[0], self.image.shape[1])
-        #x1, y1, x2, y2 = self._trim_line_to_image_bounds(x1, y1, x2, y2)
         x1, y1, x2, y2 = trimmer._trim_line_to_circle(x1, y1, x2, y2)
         self.central_line = [x1, y1, x2, y2]
-        rect_width = self.config.get('rectWidth', 20)  # Width of the rectangle
+        rect_width = self.config.get('rectWidth', 20)
 
         logging.debug(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
-        #avg_rect_intensity, avg_img_intensity = self.extract_rotated_rectangle_properties(x1, y1, x2, y2, rect_width, plotResults=True)
+
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)
         summed_profile = np.sum(self.sample_intensities(rect_area), axis=0)
-        # Detect band start, end, and central peak in the profile
-        # band_start, band_end, central_peak = self.detect_edges(summed_profile)
+
         result = self.detect_edges(summed_profile)
-        result["central_line"]=self.central_line
-        band_start, band_end, central_peak,psnr,band_valid=result["bandStart"],result["bandEnd"],result["centralPeak"],result["psnr"], result["band_valid"]
+        result["central_line"] = self.central_line
+
+        band_start = result["bandStart"]
+        band_end = result["bandEnd"]
+        central_peak = result["centralPeak"]
+        psnr = result["psnr"]
+        band_valid = result["band_valid"]
+        efficientlineIntensity = result["efficientlineIntensity"]  # Newly captured
+        defficientlineIntensity = result["defficientlineIntensity"]  # Newly captured
 
         if band_start is not None and band_end is not None and band_valid:
-            # Calculate the band width and adjust for the scaling factor
             raw_band_width = band_end - band_start
-            self.band_width = raw_band_width / self.scaling_factor  # Adjust band width based on the scaling factor
-            self.psnr=psnr
-            if self.band_width <self.config["rectWidth"]*.8 and self.band_width>self.config["rectWidth"]*.1:
-
+            self.band_width = raw_band_width / self.scaling_factor
+            self.psnr = psnr
+            self.efficientlineIntensity = efficientlineIntensity
+            self.defficientlineIntensity = defficientlineIntensity
+            if self.band_width < self.config["rectWidth"] * .8 and self.band_width > self.config["rectWidth"] * .1:
                 band_valid = True
-                self.band_valid=True
+                self.band_valid = True
                 logging.debug(f"Band width detected: {self.band_width}")
             else:
                 band_valid = False
-                self.band_valid=False
+                self.band_valid = False
         else:
             self.band_width = 0
             self.band_valid = False
@@ -218,25 +224,16 @@ class RectangularAreaBandDetector:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
 
-        # if self.plot_band_detection:
-        #     self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
-        #                     central_peak)
-
-        # self.band_valid=band_valid
-        # self.psnr=psnr
-
         final_result = {
-            **result,  # Merging result with psnr
+            **result,
             "bandWidth": self.band_width,
             "band_valid": band_valid,
-            "psnr":self.psnr
+            "psnr": self.psnr,
+            "efficientlineIntensity": self.efficientlineIntensity, # Newly added to final output
+            "defficientlineIntensity": self.defficientlineIntensity  # Newly added to final output
         }
 
-
-
         return final_result
-
-
 
     def extract_rotated_rectangle_properties(self, x1, y1, x2, y2, band_width, plotResults=False):
         """
@@ -411,64 +408,53 @@ class RectangularAreaBandDetector:
         """
         Detect edges on the intensity profile using minima detection and calculate PSNR.
         :param profile: 1D intensity profile.
-        :return: Indices of the band start (left_min), band end (right_min), central peak, and PSNR value.
+        :return: Indices of band start (left_min), band end (right_min), central peak, PSNR, defficientLineIntensity and efficientlineIntensity.
         """
-        # Step 1: Smooth the profile to reduce noise
-        band_valid=False
+        band_valid = False
         smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
-
-        # Step 2: Find the maximum (central peak) in the smoothed profile
         central_peak_index = np.argmax(smoothed_profile)
-        peak_max=0
-        noise_average=0
-        psnr_value=0
-        left_min_index=0
-        right_min_index=0
-        #central_peak_index=0
 
-        if central_peak_index !=0 and central_peak_index!= smoothed_profile.size-1:
+        peak_max = noise_average = psnr_value = efficientlineIntensity = defficientlineIntensity= 0
+        left_min_index = right_min_index = 0
 
-            peak_max = smoothed_profile[central_peak_index]  # Peak maximum
+        if central_peak_index != 0 and central_peak_index != smoothed_profile.size - 1:
+            peak_max = smoothed_profile[central_peak_index]
 
-            # Step 3: Find the minimum on the left side of the central peak
-            left_min_index = np.argmin(smoothed_profile[:central_peak_index])  # Minimum before the peak
+            left_min_index = np.argmin(smoothed_profile[:central_peak_index])
             left_min = smoothed_profile[left_min_index]
 
-            # Step 4: Find the minimum on the right side of the central peak
-            right_min_index = np.argmin(
-                smoothed_profile[central_peak_index:]) + central_peak_index  # Minimum after the peak
+            right_min_index = np.argmin(smoothed_profile[central_peak_index:]) + central_peak_index
             right_min = smoothed_profile[right_min_index]
 
+            efficientlineIntensity = max(left_min, right_min)  # Newly computed here
+            defficientlineIntensity = min(left_min, right_min)  # Newly computed here
 
-
-            # Step 5: Calculate the average of the left and right minima
             noise_average = (left_min + right_min) / 2
 
-            # Step 6: Calculate PSNR (Peak Max divided by the average of left and right minima)
             if noise_average != 0:
                 psnr_value = peak_max / noise_average
-                if psnr_value>self.config["min_psnr"]:
-                    band_valid=True
+                if psnr_value > self.config["min_psnr"]:
+                    band_valid = True
             else:
-                psnr_value = 0  # Handle case where noise is zero to avoid division by zero
+                psnr_value = 0
 
-            if left_min_index<5 or right_min_index>smoothed_profile.size-5:
+            if left_min_index < 5 or right_min_index > smoothed_profile.size - 5:
                 band_valid = False
-                #print("index is either first or last of array!!!")
 
         logging.debug(
             f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
-        logging.debug(f"PSNR value: {psnr_value}")
+        logging.debug(f"PSNR value: {psnr_value}, Efficient Line Intensity: {efficientlineIntensity} , Defficient Line Intensity: {defficientlineIntensity}")
 
-        # Step 7: Return the results in the dictionary
         return {
-            "band_peak":peak_max,
-            "band_bkg":noise_average,
+            "band_peak": peak_max,
+            "band_bkg": noise_average,
             "bandStart": left_min_index,
             "bandEnd": right_min_index,
             "centralPeak": central_peak_index,
-            "psnr": psnr_value,  # Include PSNR in the results dictionary
-            "band_valid": band_valid
+            "psnr": psnr_value,
+            "band_valid": band_valid,
+            "efficientlineIntensity": efficientlineIntensity,
+            "defficientlineIntensity": defficientlineIntensity
         }
 
     def plot_debug(self, rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end, central_peak):
