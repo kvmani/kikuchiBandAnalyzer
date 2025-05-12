@@ -312,6 +312,12 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_ex
             psnr = band.get("psnr", "0")
             efficientlineIntensity = band.get("efficientlineIntensity", "0")
             defficientlineIntensity = band.get("defficientlineIntensity", "0")
+            #efficientDefficientRatio = efficientlineIntensity/defficientlineIntensity
+            efficientDefficientRatio = (efficientlineIntensity / defficientlineIntensity
+                                        if defficientlineIntensity and efficientlineIntensity
+                                           and np.isfinite(efficientlineIntensity)
+                                           and np.isfinite(defficientlineIntensity)
+                                        else 0)
             # Append the row to data
             data.append({
                 "X,Y": xy,
@@ -326,7 +332,7 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_ex
                 "psnr": psnr,
                 "efficientlineIntensity": efficientlineIntensity,
                 "defficientlineIntensity": defficientlineIntensity,
-                "efficient_defficient_ratio":np.around(efficientlineIntensity/defficientlineIntensity,2),
+                "efficientDefficientRatio":np.around(efficientDefficientRatio,2),
                 "band_valid": band_valid
             })
 

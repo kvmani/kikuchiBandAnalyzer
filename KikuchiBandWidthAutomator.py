@@ -290,6 +290,7 @@ def main():
     # Load configuration
     start_time = time.time()
     config = load_config(file_path="bandDetectorOptions.yml")
+    config = load_config(file_path="bandDetectorOptionsDebug.yml")
     #config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
     #config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
     
@@ -422,14 +423,17 @@ def main():
         psnr_array = np.zeros_like(ci_data, dtype="float32")
         efficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
         defficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
+        efficientDefficientRatio_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
 
         # Populate arrays
-        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity in zip(df["Ind"], df["Band Width"], df["psnr"],
-                                                                 df["efficientlineIntensity"] , df["defficientlineIntensity"]):
+        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity, efficientDefficientRatio in zip(df["Ind"], df["Band Width"], df["psnr"],
+                                                                 df["efficientlineIntensity"] , df["defficientlineIntensity"], df["efficientDefficientRatio"]):
             band_width_array[idx] = band_width
             psnr_array[idx] = psnr
+            #efficientDefficientRatio_array=efficientDefficientRatio
             efficientlineIntensity_array[idx] = efficientlineIntensity  # New line here
             defficientlineIntensity_array[idx] = defficientlineIntensity  # New line here
+            efficientDefficientRatio_array[idx] = efficientDefficientRatio  # New line here
 
         desired_hkl_ref_width = config["desired_hkl_ref_width"]
         band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
@@ -442,7 +446,8 @@ def main():
             "PRIAS_Center_Square": band_stress_array,
             "PRIAS_Top_Strip": psnr_array,
             "efficientlineIntensity": efficientlineIntensity_array ,  # Included here if needed
-            "defficientlineIntensity": efficientlineIntensity_array  # Included here if needed
+            "defficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
+            "efficientDefficientRatio": efficientDefficientRatio_array  # Included here if needed
         }
 
         # Modify the .ang file for efficientlineIntensity as well
@@ -453,7 +458,13 @@ def main():
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_defficientlineIntensity",
                            IQ=defficientlineIntensity_array)
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientlineIntensity",
-                           IQ=efficientlineIntensity_array)  # New addition
+                           IQ=efficientlineIntensity_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientDefficientRatio",
+                           IQ=efficientDefficientRatio_array)
+        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
+                           IQ=band_width_array, SEM=efficientDefficientRatio_array)
+
+        # New addition
 
         logging.info(
             "Successfully wrote band_width, strain, stress, psnr, defficientlineIntensity and efficientlineIntensity in modified ang file!")
