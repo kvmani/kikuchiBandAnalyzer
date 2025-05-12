@@ -25,6 +25,7 @@ import utilities as ut
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 def load_config(file_path="bandDetectorOptions.yml"):
     with open(file_path, "r") as file:
         config = yaml.safe_load(file)
@@ -33,10 +34,11 @@ def load_config(file_path="bandDetectorOptions.yml"):
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
 KikuchiPatternSimulator = kp.simulations.KikuchiPatternSimulator
+
+
 # Custom class as defined previously
 class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulation):
     from collections import defaultdict
-
 
     def _group_by_ind(self, data):
         """
@@ -71,7 +73,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         # Convert defaultdict back to a regular list of dictionaries
         return list(grouped_data.values())
 
-    def _df_to_grouped_json(self,df):
+    def _df_to_grouped_json(self, df):
         # Convert DataFrame to JSON string
         json_str = df.to_json(orient="records")
 
@@ -83,7 +85,6 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
 
         # Return grouped JSON as a string
         return json.dumps(grouped_data, indent=4), grouped_data
-
 
     @staticmethod
     def remove_newlines_from_fields(json_str):
@@ -124,10 +125,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         # Split string into integers, apply abs, sort, convert back to string without spaces
         hkl_values = sorted(map(abs, map(int, hkl_str.split())))
         return ''.join(map(str, hkl_values))
+
     def _kikuchi_line_labels_as_markers(self, desired_hkl='111', **kwargs) -> list:
         """Return a list of Kikuchi line label text markers."""
         coords = self.lines_coordinates(index=(), exclude_nan=False)
-        coords=np.around(coords,3)
+        coords = np.around(coords, 3)
         # Labels for Kikuchi lines can be based on reflectors (e.g., hkl values)
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
@@ -135,7 +137,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
 
         filtered_texts = np.array([text if self.get_hkl_group(text) == desired_hkl else '' for text in texts])
 
-        #refelctorGroup  = [''.join(map(str, [abs(i.h), abs(i.k), abs(i.l)])) for i in reflectors]
+        # refelctorGroup  = [''.join(map(str, [abs(i.h), abs(i.k), abs(i.l)])) for i in reflectors]
         refelctorGroup = [''.join(map(str, sorted(map(abs, row)))) for row in reflectors]
 
         kw = {
@@ -154,8 +156,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         is_finite = np.isfinite(coords)[..., 0]
         coords[~is_finite] = -1
         det_bounds = self.detector.shape
-        det_mid_point=0.5*det_bounds[0],0.5*det_bounds[1]
-        dist_threshold = 0.75*0.5*det_bounds[0] ## 75% of radius of the detector
+        det_mid_point = 0.5 * det_bounds[0], 0.5 * det_bounds[1]
+        dist_threshold = 0.75 * 0.5 * det_bounds[0]  ## 75% of radius of the detector
         for i in range(reflectors.shape[0]):
             if not np.allclose(coords[..., i, :], -1):  # Check for all NaNs
                 x1 = coords[..., i, 0]
@@ -165,7 +167,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 x = 0.5 * (x1 + x2)
                 y = 0.5 * (y1 + y2)
 
-                line_dist = np.sqrt((x- det_mid_point[0])**2+(y- det_mid_point[1])**2)
+                line_dist = np.sqrt((x - det_mid_point[0]) ** 2 + (y - det_mid_point[1]) ** 2)
 
                 x[~is_finite[..., i]] = np.nan
                 y[~is_finite[..., i]] = np.nan
@@ -185,8 +187,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     num_valid = row_indices.size
                     kikuchi_data = {
                         "hkl": texts[i].strip(),
-                        "hkl_group":refelctorGroup[i],
-                        #"hkl_value":reflectors[i],
+                        "hkl_group": refelctorGroup[i],
+                        # "hkl_value":reflectors[i],
                         "central_line": np.vstack(
                             [x1[valid_mask], y1[valid_mask], x2[valid_mask], y2[valid_mask]]).T.tolist(),
                         "line_mid_xy": np.vstack([x[valid_mask], y[valid_mask]]).T.tolist(),  # Midpoint coordinates
@@ -197,17 +199,16 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     # Append data to the corresponding positions in the 2D list
                     for idx in range(num_valid):
                         row, col = row_indices[idx], col_indices[idx]
-                        if kikuchi_data["line_dist"][idx]<dist_threshold:
+                        if kikuchi_data["line_dist"][idx] < dist_threshold:
                             kikuchi_line_dict_list[row][col].append({
-                                "(x,y)":(row,col),
+                                "(x,y)": (row, col),
                                 "ind": (row * num_cols) + col,
                                 "hkl": kikuchi_data["hkl"],
-                                "hkl_group":kikuchi_data["hkl_group"],
+                                "hkl_group": kikuchi_data["hkl_group"],
                                 "central_line": kikuchi_data["central_line"][idx],
                                 "line_mid_xy": kikuchi_data["line_mid_xy"][idx],
                                 "line_dist": kikuchi_data["line_dist"][idx]
                             })
-
 
         # Convert to DataFrame
         flat_kikuchi_line_dict_list = []
@@ -225,8 +226,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
             f.write(cleaned_json_str)
 
         # Save as JSON
-        #df.to_json("kikuchi_lines.json", orient="records", indent=4)
-
+        # df.to_json("kikuchi_lines.json", orient="records", indent=4)
 
         # Save as Excel
         df.to_excel("kikuchi_lines.xlsx", index=False, engine="openpyxl")
@@ -262,9 +262,9 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         if kikuchi_line_labels:
             if kikuchi_line_labels_kwargs is None:
                 kikuchi_line_labels_kwargs = {}
-            markersTmp,  grouped_kikuchi_dict_list = self._kikuchi_line_labels_as_markers(desired_hkl=desired_hkl, **kikuchi_line_labels_kwargs)
-            markers+=markersTmp
-
+            markersTmp, grouped_kikuchi_dict_list = self._kikuchi_line_labels_as_markers(desired_hkl=desired_hkl,
+                                                                                         **kikuchi_line_labels_kwargs)
+            markers += markersTmp
 
         return markers, grouped_kikuchi_dict_list
 
@@ -283,6 +283,8 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
         return CustomGeometricalKikuchiPatternSimulation(
             detector, rotations, result.reflectors, result._lines, result._zone_axes
         )
+
+
 # Use this CustomKikuchiPatternSimulator in the main method
 
 
@@ -291,20 +293,20 @@ def main():
     start_time = time.time()
     config = load_config(file_path="bandDetectorOptions.yml")
     config = load_config(file_path="bandDetectorOptionsDebug.yml")
-    #config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
-    #config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
-    
+    # config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
+    # config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
+
     data_path = config.get("h5_file_path", "path_to_default_file.h5")
     output_dir = os.path.dirname(data_path)
     base_name, ext = os.path.splitext(os.path.basename(data_path))
-    
+
     # Check if the input file ends with .oh5 and create a .h5 copy
     if ext == ".oh5":
         new_data_path = os.path.join(output_dir, f"{base_name}.h5")
         shutil.copy(data_path, new_data_path)
         logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
         data_path = new_data_path  # Update data_path to point to the new .h5 file
-    
+
     temp_data_path = ut.create_temp_file(data_path)
     modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
 
@@ -323,7 +325,7 @@ def main():
 
     if debug:
         logging.info("Debug mode enabled: Cropping data for faster processing.")
-        s.crop(1, start=crop_start, end=crop_end+10)
+        s.crop(1, start=crop_start, end=crop_end + 10)
         s.crop(0, start=crop_start, end=crop_end)
 
     # Setup detector and phase list based on material properties
@@ -344,20 +346,20 @@ def main():
     hkl_list = config["hkl_list"]
     pc = config.get("pc", [0.545, 0.610, 0.6863])
     header_data = ut.extract_header_data(modified_data_path)
-    
+
     # Detector setup and pattern extraction
     sig_shape = s.axes_manager.signal_shape[::-1]
     det = kp.detectors.EBSDDetector(
-            sig_shape, 
-            sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
-            tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
-            azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
-            convention="edax",
-            pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0)))
-            )
+        sig_shape,
+        sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
+        tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
+        azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
+        convention="edax",
+        pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0)))
+    )
 
-    # det = kp.detectors.EBSDDetector(sig_shape, 
-    #                                 sample_tilt=float(header_data.get("Sample Tilt", 0.0)), 
+    # det = kp.detectors.EBSDDetector(sig_shape,
+    #                                 sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
     #                                 camera_tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
     #                                 azimuthal_angle=float(header_data.get("Camera Azimuthal Angle", 0.0))
     #                                 convention="edax", pc=header_data.get("pc",(0.,0.,0.)))
@@ -379,7 +381,7 @@ def main():
     s.add_marker(markers, plot_marker=False, permanent=True)
     logging.info("Completed band identification for width estimation. Now starting the band width estimation!")
 
-    skip_display_EBSDmap=config.get("skip_display_EBSDmap",False)
+    skip_display_EBSDmap = config.get("skip_display_EBSDmap", False)
     if not skip_display_EBSDmap:
         v_ipf = Vector3d.xvector()
         sym = xmap.phases[0].point_group
@@ -391,10 +393,11 @@ def main():
 
     # Call the process_kikuchi_images function
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
-    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl, config=config)
+    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl,
+                                               config=config)
     output_excel_path = os.path.join(output_dir, f"{base_name}_bandOutputData.xlsx")
     filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
-    save_results_to_excel(processed_results, output_excel_path,filtered_excel_path)
+    save_results_to_excel(processed_results, output_excel_path, filtered_excel_path)
 
     # Modified section of your calling code after reading Excel:
     df = pd.read_excel(filtered_excel_path)
@@ -426,11 +429,12 @@ def main():
         efficientDefficientRatio_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
 
         # Populate arrays
-        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity, efficientDefficientRatio in zip(df["Ind"], df["Band Width"], df["psnr"],
-                                                                 df["efficientlineIntensity"] , df["defficientlineIntensity"], df["efficientDefficientRatio"]):
+        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity, efficientDefficientRatio in zip(
+                df["Ind"], df["Band Width"], df["psnr"],
+                df["efficientlineIntensity"], df["defficientlineIntensity"], df["efficientDefficientRatio"]):
             band_width_array[idx] = band_width
             psnr_array[idx] = psnr
-            #efficientDefficientRatio_array=efficientDefficientRatio
+            # efficientDefficientRatio_array=efficientDefficientRatio
             efficientlineIntensity_array[idx] = efficientlineIntensity  # New line here
             defficientlineIntensity_array[idx] = defficientlineIntensity  # New line here
             efficientDefficientRatio_array[idx] = efficientDefficientRatio  # New line here
@@ -445,7 +449,7 @@ def main():
             "PRIAS_Bottom_Strip": band_strain_array,
             "PRIAS_Center_Square": band_stress_array,
             "PRIAS_Top_Strip": psnr_array,
-            "efficientlineIntensity": efficientlineIntensity_array ,  # Included here if needed
+            "efficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
             "defficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
             "efficientDefficientRatio": efficientDefficientRatio_array  # Included here if needed
         }
@@ -462,7 +466,7 @@ def main():
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientDefficientRatio",
                            IQ=efficientDefficientRatio_array)
         ut.modify_ang_file(in_ang_path, f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
-                           IQ=band_width_array, SEM=efficientDefficientRatio_array)
+                           IQ=band_width_array, Fit=efficientDefficientRatio_array)
 
         # New addition
 
@@ -481,7 +485,6 @@ def main():
 
         logging.info("Added Band_Width, psnr, defficientlineIntensity, efficientlineIntensity data to HDF5 file.")
 
-
     logging.info("Process completed. Results saved to Excel files and modified .ang file.")
 
     end_time = time.time()  # End timing
@@ -489,7 +492,6 @@ def main():
 
     # Optional visualization
 
-    
 
 if __name__ == "__main__":
     main()
