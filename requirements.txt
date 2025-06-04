@@ -1,0 +1,35 @@
+# Core Scientific Libraries
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.3
+matplotlib==3.9.0
+scikit-image==0.24.0
+scikit-learn==1.5.2
+
+# Image and Video Processing
+opencv-python==4.9.0.80
+imageio==2.36.1
+tifffile==2024.5.22
+Pillow==10.0.1
+imutils==0.5.4
+
+# EBSD, Kikuchi, and Crystallography
+hyperspy==1.7.6
+kikuchipy==0.11.dev0
+pyebsdindex==0.3.6
+orix==0.13.1
+diffsims==0.6.0
+diffpy.structure==3.2.1
+pymatgen==2024.9.17.1
+PyCifRW==4.4.6
+rosettasciio==0.6
+
+# Plotting & Interactive Visualization
+seaborn==0.13.2
+plotly==5.24.1
+
+# Misc Utilities
+natsort==8.4.0
+tabulate==0.9.0
+tqdm==4.66.2
+pyyaml==6.0.1
