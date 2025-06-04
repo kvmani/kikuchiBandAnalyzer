@@ -2,7 +2,6 @@ import time
 import os
 import logging
 
-import yaml
 import matplotlib.pyplot as plt
 import kikuchipy as kp
 import re
@@ -13,7 +12,7 @@ from orix.crystal_map import Phase, PhaseList
 from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
-from hyperspy.utils.markers import line_segment, point, text
+from hyperspy.utils.markers import Texts
 import pandas as pd
 
 import h5py
@@ -82,7 +81,11 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 y = y.squeeze()
 
                 # Create a text marker with the label for each Kikuchi line
-                text_marker = text(x=x, y=y, text=filtered_texts[i], **kw)
+                text_marker = Texts(
+                    [[x, y]],
+                    texts=[filtered_texts[i]],
+                    **kw,
+                )
                 kikuchi_line_label_list.append(text_marker)
 
                 # Vectorized approach to fill kikuchi_line_dict_list
@@ -179,9 +182,6 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
 # Main function for testing the custom class
 class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
     def on_detector(self, detector, rotations):
-        # Get reflectors from the instance
-        reflectors = self.reflectors
-
         # Call the base class method `on_detector`, which internally processes the lines and zone_axes
         # Let the base class handle this part
         result = super().on_detector(detector, rotations)
