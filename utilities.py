@@ -1,4 +1,7 @@
 import os
+import json
+import re
+from collections import defaultdict
 import pandas as pd
 import numpy as np
 import logging
@@ -268,6 +271,77 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
         f.writelines(modified_lines)
 
     logging.info(f"Modified file saved as: {new_file_path}")
+
+
+def group_by_ind(data):
+    """Group dictionaries by 'ind' field and consolidate related information."""
+    grouped = defaultdict(lambda: {"x,y": None, "ind": None, "points": []})
+    for entry in data:
+        ind = entry["ind"]
+        if grouped[ind]["x,y"] is None:
+            grouped[ind]["x,y"] = entry["(x,y)"]
+            grouped[ind]["ind"] = ind
+        grouped[ind]["points"].append({
+            "hkl": entry["hkl"],
+            "hkl_group": entry["hkl_group"],
+            "central_line": entry["central_line"],
+            "line_mid_xy": entry["line_mid_xy"],
+            "line_dist": entry["line_dist"],
+        })
+    return list(grouped.values())
+
+
+def df_to_grouped_json(df):
+    """Return grouped JSON string and Python object from DataFrame."""
+    json_str = df.to_json(orient="records")
+    data = json.loads(json_str)
+    grouped = group_by_ind(data)
+    return json.dumps(grouped, indent=4), grouped
+
+
+def remove_newlines_from_fields(json_str):
+    """Remove newline characters from 'central_line', 'line_mid_xy', and 'x,y'."""
+    central_line_pattern = r'("central_line":\s*\[[^\]]*\])'
+    line_mid_xy_pattern = r'("line_mid_xy":\s*\[[^\]]*\])'
+    xy_pattern = r'("x,y":\s*\[[^\]]*\])'
+
+    def cleanup_array(match):
+        field, array_content = match.group(0).split(":")
+        clean = re.sub(r"\s+", " ", array_content).replace("[ ", "[").replace(" ]", "]")
+        return f"{field}: {clean}"
+
+    json_str = re.sub(central_line_pattern, cleanup_array, json_str, flags=re.DOTALL)
+    json_str = re.sub(line_mid_xy_pattern, cleanup_array, json_str, flags=re.DOTALL)
+    json_str = re.sub(xy_pattern, cleanup_array, json_str, flags=re.DOTALL)
+    return json_str
+
+
+def get_hkl_group(hkl_str):
+    values = sorted(map(abs, map(int, hkl_str.split())))
+    return "".join(map(str, values))
+
+
+def add_band_results_to_hdf5(h5_path, arrays):
+    """Store computed band result arrays in the HDF5 file."""
+    with h5py.File(h5_path, "a") as h5file:
+        target_dataset_name = next(n for n in h5file if n not in ["Manufacturer", "Version"])
+        for name, arr in arrays.items():
+            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/{name}", data=arr)
+
+
+def save_band_data_to_ang(ang_path, desired_hkl, arrays):
+    """Save band result arrays back to the corresponding .ang file."""
+    ut_args = {
+        f"{desired_hkl}_band_width": arrays["Band_Width"],
+        f"{desired_hkl}_strain": arrays["strain"],
+        f"{desired_hkl}_stress": arrays["stress"],
+        f"{desired_hkl}_psnr": arrays["psnr"],
+        f"{desired_hkl}_defficientlineIntensity": arrays["defficientlineIntensity"],
+        f"{desired_hkl}_efficientlineIntensity": arrays["efficientlineIntensity"],
+        f"{desired_hkl}_efficientDefficientRatio": arrays["efficientDefficientRatio"],
+        f"{desired_hkl}_Bandwidth_efficientDefficientRatio": arrays["Band_Width"],
+    }
+    modify_ang_file(ang_path, **ut_args)
 
 
 def create_mock_ang_file(file_path, nrows, ncols_even, headers, column_headers):

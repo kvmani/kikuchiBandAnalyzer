@@ -1,8 +1,8 @@
 import time
-import warnings, os
-import yaml
+import os
 import logging
 
+import yaml
 import matplotlib.pyplot as plt
 import kikuchipy as kp
 import re
@@ -15,21 +15,15 @@ from typing import Optional
 import numpy as np
 from hyperspy.utils.markers import line_segment, point, text
 import pandas as pd
-from collections import defaultdict
-import json
-from kikuchiBandWidthDetector import process_kikuchi_images
-from kikuchiBandWidthDetector import save_results_to_excel
-import shutil
+
 import h5py
+import shutil
+
 import utilities as ut
+from kikuchiBandWidthDetector import process_kikuchi_images, save_results_to_excel
+import configLoader
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def load_config(file_path="bandDetectorOptions.yml"):
-    with open(file_path, "r") as file:
-        config = yaml.safe_load(file)
-    return config
 
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
@@ -38,93 +32,6 @@ KikuchiPatternSimulator = kp.simulations.KikuchiPatternSimulator
 
 # Custom class as defined previously
 class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulation):
-    from collections import defaultdict
-
-    def _group_by_ind(self, data):
-        """
-        Groups a list of dictionaries by the 'ind' field and consolidates related fields.
-
-        Parameters:
-        - data (list): A list of dictionaries containing fields '(x,y)', 'ind', 'hkl', 'central_line', 'line_mid_xy', and 'line_dist'.
-
-        Returns:
-        - result (list): A list of dictionaries, where each dictionary is grouped by 'ind' and includes a single '(x,y)' and a list of 'points' for each 'hkl'.
-        """
-        grouped_data = defaultdict(lambda: {"x,y": None, "ind": None, "points": []})
-
-        # Loop through the data to group by "ind"
-        for entry in data:
-            ind = entry["ind"]
-
-            # Set (x,y) for the first entry of each group
-            if grouped_data[ind]["x,y"] is None:
-                grouped_data[ind]["x,y"] = entry["(x,y)"]
-                grouped_data[ind]["ind"] = ind
-
-            # Append the current point's details to the "points" list
-            grouped_data[ind]["points"].append({
-                "hkl": entry["hkl"],
-                "hkl_group": entry["hkl_group"],
-                "central_line": entry["central_line"],
-                "line_mid_xy": entry["line_mid_xy"],
-                "line_dist": entry["line_dist"]
-            })
-
-        # Convert defaultdict back to a regular list of dictionaries
-        return list(grouped_data.values())
-
-    def _df_to_grouped_json(self, df):
-        # Convert DataFrame to JSON string
-        json_str = df.to_json(orient="records")
-
-        # Load JSON string into Python data structure (list of dictionaries)
-        data = json.loads(json_str)
-
-        # Apply the grouping method
-        grouped_data = self._group_by_ind(data)
-
-        # Return grouped JSON as a string
-        return json.dumps(grouped_data, indent=4), grouped_data
-
-    @staticmethod
-    def remove_newlines_from_fields(json_str):
-        """
-        Removes newline characters from the "central_line" and "x,y" fields in the JSON string,
-        ensuring that only single spaces remain between elements in the arrays without duplicating the content.
-
-        Parameters:
-        - json_str (str): The JSON string to process.
-
-        Returns:
-        - str: The processed JSON string with newlines removed from "central_line" and "x,y" fields.
-        """
-        # Regex to match "central_line" and "x,y" fields with values inside []
-        central_line_pattern = r'("central_line":\s*\[[^\]]*\])'
-        line_mid_xy_pattern = r'("line_mid_xy":\s*\[[^\]]*\])'
-        xy_pattern = r'("x,y":\s*\[[^\]]*\])'
-
-        # Function to clean up excess spaces and ensure arrays are on one line
-        def cleanup_array(match):
-            # Extract the field and the array
-            field, array_content = match.group(0).split(":")
-            # Remove newlines and excess spaces within the array
-            clean_array_content = re.sub(r'\s+', ' ', array_content).replace('[ ', '[').replace(' ]', ']')
-            return f'{field}: {clean_array_content}'
-
-        # Replace newlines and excess spaces in "central_line" field
-        json_str = re.sub(central_line_pattern, cleanup_array, json_str, flags=re.DOTALL)
-        # Replace newlines and excess spaces in "line_mid_xy" field
-        json_str = re.sub(line_mid_xy_pattern, cleanup_array, json_str, flags=re.DOTALL)
-        # Replace newlines and excess spaces in "x,y" field
-        json_str = re.sub(xy_pattern, cleanup_array, json_str, flags=re.DOTALL)
-
-        return json_str
-
-    @staticmethod
-    def get_hkl_group(hkl_str):
-        # Split string into integers, apply abs, sort, convert back to string without spaces
-        hkl_values = sorted(map(abs, map(int, hkl_str.split())))
-        return ''.join(map(str, hkl_values))
 
     def _kikuchi_line_labels_as_markers(self, desired_hkl='111', **kwargs) -> list:
         """Return a list of Kikuchi line label text markers."""
@@ -135,7 +42,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
         array_str = np.array2string(reflectors, threshold=reflectors.size)
         texts = re.sub("[][ ]", " ", array_str).split("\n")
 
-        filtered_texts = np.array([text if self.get_hkl_group(text) == desired_hkl else '' for text in texts])
+        filtered_texts = np.array([text if ut.get_hkl_group(text) == desired_hkl else '' for text in texts])
 
         # refelctorGroup  = [''.join(map(str, [abs(i.h), abs(i.k), abs(i.l)])) for i in reflectors]
         refelctorGroup = [''.join(map(str, sorted(map(abs, row)))) for row in reflectors]
@@ -218,9 +125,9 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                     flat_kikuchi_line_dict_list.extend(entry)
 
         df = pd.DataFrame(flat_kikuchi_line_dict_list)
-        final_json_str, grouped_kikuchi_dict_list = self._df_to_grouped_json(df)
+        final_json_str, grouped_kikuchi_dict_list = ut.df_to_grouped_json(df)
 
-        cleaned_json_str = CustomGeometricalKikuchiPatternSimulation.remove_newlines_from_fields(final_json_str)
+        cleaned_json_str = ut.remove_newlines_from_fields(final_json_str)
         # Dump the final JSON string to disk
         with open("kikuchi_lines.json", "w") as f:
             f.write(cleaned_json_str)
@@ -285,217 +192,138 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
         )
 
 
-# Use this CustomKikuchiPatternSimulator in the main method
+# Wrapper class encapsulating the full workflow
+class BandWidthAutomator:
+    def __init__(self, config_path="bandDetectorOptionsDebug.yml"):
+        self.config = configLoader.load_config(config_path)
+        self.start_time = time.time()
+        self.data_path = self.config.get("h5_file_path", "path_to_default_file.h5")
+        self.output_dir = os.path.dirname(self.data_path)
+        self.base_name, self.ext = os.path.splitext(os.path.basename(self.data_path))
+        if self.ext == ".oh5":
+            new_data_path = os.path.join(self.output_dir, f"{self.base_name}.h5")
+            shutil.copy(self.data_path, new_data_path)
+            logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
+            self.data_path = new_data_path
+        self.modified_data_path = os.path.join(self.output_dir, f"{self.base_name}_modified.h5")
+        shutil.copy(self.data_path, self.modified_data_path)
+        logging.info(f"Copied HDF5 file to: {self.modified_data_path}")
+        self.in_ang_path = os.path.join(self.output_dir, f"{self.base_name}.ang")
 
+    def run(self):
+        config = self.config
+        crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
+        debug = config.get("debug", False)
+        desired_hkl = config.get("desired_hkl", "111")
 
-def main():
-    # Load configuration
-    start_time = time.time()
-    # config = load_config(file_path="bandDetectorOptions.yml")
-    # config = load_config(file_path="bandDetectorOptionsDebug.yml")
-    config = load_config(file_path="bandDetectorOptionsHcp.yml")
-    # config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
-    # config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
+        logging.info(f"Loading dataset from: {self.data_path}")
+        s = kp.load(self.data_path, lazy=False)
 
-    data_path = config.get("h5_file_path", "path_to_default_file.h5")
-    output_dir = os.path.dirname(data_path)
-    base_name, ext = os.path.splitext(os.path.basename(data_path))
+        if debug:
+            logging.info("Debug mode enabled: Cropping data for faster processing.")
+            s.crop(1, start=crop_start, end=crop_end + 10)
+            s.crop(0, start=crop_start, end=crop_end)
 
-    # Check if the input file ends with .oh5 and create a .h5 copy
-    if ext == ".oh5":
-        new_data_path = os.path.join(output_dir, f"{base_name}.h5")
-        shutil.copy(data_path, new_data_path)
-        logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
-        data_path = new_data_path  # Update data_path to point to the new .h5 file
-
-    temp_data_path = ut.create_temp_file(data_path)
-    modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
-
-    in_ang_path = os.path.join(output_dir, f"{base_name}.ang")
-    out_ang_path = os.path.join(output_dir, f"{base_name}_modified.ang")
-    shutil.copy(data_path, modified_data_path)
-    logging.info(f"Copied HDF5 file to: {modified_data_path}")
-
-    crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
-    debug = config.get("debug", False)
-    desired_hkl = config.get("desired_hkl", "111")
-
-    # Load dataset and optional cropping based on debug flag
-    logging.info(f"Loading dataset from: {data_path}")
-    s = kp.load(data_path, lazy=False)
-
-    if debug:
-        logging.info("Debug mode enabled: Cropping data for faster processing.")
-        s.crop(1, start=crop_start, end=crop_end + 10)
-        s.crop(0, start=crop_start, end=crop_end)
-
-    # Setup detector and phase list based on material properties
-    phase_config = config["phase_list"]
-    phase_list = PhaseList(
-        Phase(
-            name=phase_config["name"],
-            space_group=phase_config["space_group"],
-            structure=Structure(
-                lattice=Lattice(*phase_config["lattice"]),
-                atoms=[
-                    Atom(atom["element"], atom["position"])
-                    for atom in phase_config["atoms"]
-                ],
+        phase_config = config["phase_list"]
+        phase_list = PhaseList(
+            Phase(
+                name=phase_config["name"],
+                space_group=phase_config["space_group"],
+                structure=Structure(
+                    lattice=Lattice(*phase_config["lattice"]),
+                    atoms=[Atom(atom["element"], atom["position"]) for atom in phase_config["atoms"]],
+                ),
             ),
-        ),
-    )
-    hkl_list = config["hkl_list"]
-    pc = config.get("pc", [0.545, 0.610, 0.6863])
-    header_data = ut.extract_header_data(modified_data_path)
+        )
+        hkl_list = config["hkl_list"]
+        header_data = ut.extract_header_data(self.modified_data_path)
 
-    # Detector setup and pattern extraction
-    sig_shape = s.axes_manager.signal_shape[::-1]
-    det = kp.detectors.EBSDDetector(
-        sig_shape,
-        sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
-        tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
-        azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
-        convention="edax",
-        pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0)))
-    )
+        sig_shape = s.axes_manager.signal_shape[::-1]
+        det = kp.detectors.EBSDDetector(
+            sig_shape,
+            sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
+            tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
+            azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
+            convention="edax",
+            pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0)))
+        )
 
-    # det = kp.detectors.EBSDDetector(sig_shape,
-    #                                 sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
-    #                                 camera_tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
-    #                                 azimuthal_angle=float(header_data.get("Camera Azimuthal Angle", 0.0))
-    #                                 convention="edax", pc=header_data.get("pc",(0.,0.,0.)))
+        indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
+        xmap, index_data, indexed_band_data = s.hough_indexing(
+            phase_list=phase_list, indexer=indexer, return_index_data=True,
+            return_band_data=True, verbose=1
+        )
 
-    # PhaseList and indexing
-    indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
-    xmap, index_data, indexed_band_data = s.hough_indexing(
-        phase_list=phase_list, indexer=indexer, return_index_data=True, return_band_data=True, verbose=1
-    )
+        ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list)
+        ref = ref.symmetrise()
+        simulator = CustomKikuchiPatternSimulator(ref)
+        sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
 
-    # Use the CustomKikuchiPatternSimulator for geometrical simulations
-    ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list)
-    ref = ref.symmetrise()
-    simulator = CustomKikuchiPatternSimulator(ref)  # Use the custom simulator
-    sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
+        markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=desired_hkl)
+        s.add_marker(markers, plot_marker=False, permanent=True)
 
-    # Add markers and Kikuchi line labels to the signal
-    markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=config["desired_hkl"])
-    s.add_marker(markers, plot_marker=False, permanent=True)
-    logging.info("Completed band identification for width estimation. Now starting the band width estimation!")
+        skip_display_EBSDmap = config.get("skip_display_EBSDmap", False)
+        if not skip_display_EBSDmap:
+            v_ipf = Vector3d.xvector()
+            sym = xmap.phases[0].point_group
+            ckey = plot.IPFColorKeyTSL(sym, v_ipf)
+            rgb_x = ckey.orientation2color(xmap.rotations)
+            maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
+            s.plot(maps_nav_rgb)
+            plt.show()
 
-    skip_display_EBSDmap = config.get("skip_display_EBSDmap", False)
-    if not skip_display_EBSDmap:
-        v_ipf = Vector3d.xvector()
-        sym = xmap.phases[0].point_group
-        ckey = plot.IPFColorKeyTSL(sym, v_ipf)
-        rgb_x = ckey.orientation2color(xmap.rotations)
-        maps_nav_rgb = kp.draw.get_rgb_navigator(rgb_x.reshape(xmap.shape + (3,)))
-        s.plot(maps_nav_rgb)
-        plt.show()
+        ebsd_data = s.data
+        processed_results = process_kikuchi_images(
+            ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl, config=config
+        )
+        output_excel_path = os.path.join(self.output_dir, f"{self.base_name}_bandOutputData.xlsx")
+        filtered_excel_path = os.path.join(self.output_dir, f"{self.base_name}_filtered_band_data.xlsx")
+        save_results_to_excel(processed_results, output_excel_path, filtered_excel_path)
 
-    # Call the process_kikuchi_images function
-    ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
-    processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl,
-                                               config=config)
-    output_excel_path = os.path.join(output_dir, f"{base_name}_bandOutputData.xlsx")
-    filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
-    save_results_to_excel(processed_results, output_excel_path, filtered_excel_path)
+        df = pd.read_excel(filtered_excel_path)
+        required_columns = ["Band Width", "psnr", "efficientlineIntensity", "Ind", "defficientlineIntensity"]
+        for col in required_columns:
+            if col not in df.columns:
+                logging.error(f"{col} column not found in filtered_band_data.xlsx.")
+                return
+        logging.info("Loaded band_width, psnr,defficientlineIntensity and efficientlineIntensity data from Excel.")
 
-    # Modified section of your calling code after reading Excel:
-    df = pd.read_excel(filtered_excel_path)
+        with h5py.File(self.modified_data_path, "a") as h5file:
+            target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
+            ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
 
-    # Check columns
-    required_columns = ["Band Width", "psnr", "efficientlineIntensity", "Ind", "defficientlineIntensity"]
-    for col in required_columns:
-        if col not in df.columns:
-            logging.error(f"{col} column not found in filtered_band_data.xlsx.")
-            return
-    logging.info("Loaded band_width, psnr,defficientlineIntensity and efficientlineIntensity data from Excel.")
-
-    # Open the copied HDF5 file and add the data nodes
-    with h5py.File(modified_data_path, "a") as h5file:
-        target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
-
-        ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
-
-        max_index = df["Ind"].max()
-        if max_index >= len(ci_data):
-            logging.error("Maximum index in 'Ind' exceeds length of /Nickel/EBSD/Data/CI.")
-            return
-
-        # Create zero-initialized arrays
-        band_width_array = np.zeros_like(ci_data, dtype="float32")
-        psnr_array = np.zeros_like(ci_data, dtype="float32")
-        efficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
-        defficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
-        efficientDefficientRatio_array = np.zeros_like(ci_data, dtype="float32")  # Newly added array
-
-        # Populate arrays
-        for idx, band_width, psnr, defficientlineIntensity, efficientlineIntensity, efficientDefficientRatio in zip(
-                df["Ind"], df["Band Width"], df["psnr"],
-                df["efficientlineIntensity"], df["defficientlineIntensity"], df["efficientDefficientRatio"]):
-            band_width_array[idx] = band_width
-            psnr_array[idx] = psnr
-            # efficientDefficientRatio_array=efficientDefficientRatio
-            efficientlineIntensity_array[idx] = efficientlineIntensity  # New line here
-            defficientlineIntensity_array[idx] = defficientlineIntensity  # New line here
-            efficientDefficientRatio_array[idx] = efficientDefficientRatio  # New line here
-
-        desired_hkl_ref_width = config["desired_hkl_ref_width"]
-        band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
-        elastic_modulus = float(config["elastic_modulus"])
-        band_stress_array = band_strain_array * elastic_modulus
-
-        angInputDict = {
-            "IQ": band_width_array,
-            "PRIAS_Bottom_Strip": band_strain_array,
-            "PRIAS_Center_Square": band_stress_array,
-            "PRIAS_Top_Strip": psnr_array,
-            "efficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
-            "defficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
-            "efficientDefficientRatio": efficientDefficientRatio_array  # Included here if needed
+        arrays = {
+            "Band_Width": np.zeros_like(ci_data, dtype="float32"),
+            "psnr": np.zeros_like(ci_data, dtype="float32"),
+            "efficientlineIntensity": np.zeros_like(ci_data, dtype="float32"),
+            "defficientlineIntensity": np.zeros_like(ci_data, dtype="float32"),
+            "efficientDefficientRatio": np.zeros_like(ci_data, dtype="float32"),
         }
 
-        # Modify the .ang file for efficientlineIntensity as well
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_defficientlineIntensity",
-                           IQ=defficientlineIntensity_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientlineIntensity",
-                           IQ=efficientlineIntensity_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientDefficientRatio",
-                           IQ=efficientDefficientRatio_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
-                           IQ=band_width_array, Fit=efficientDefficientRatio_array)
+        for idx, bw, ps, eff, deff, ratio in zip(
+                df["Ind"], df["Band Width"], df["psnr"],
+                df["efficientlineIntensity"], df["defficientlineIntensity"], df["efficientDefficientRatio"]):
+            arrays["Band_Width"][idx] = bw
+            arrays["psnr"][idx] = ps
+            arrays["efficientlineIntensity"][idx] = eff
+            arrays["defficientlineIntensity"][idx] = deff
+            arrays["efficientDefficientRatio"][idx] = ratio
 
-        # New addition
+        desired_hkl_ref_width = config["desired_hkl_ref_width"]
+        arrays["strain"] = (arrays["Band_Width"] - desired_hkl_ref_width) / desired_hkl_ref_width
+        elastic_modulus = float(config["elastic_modulus"])
+        arrays["stress"] = arrays["strain"] * elastic_modulus
 
-        logging.info(
-            "Successfully wrote band_width, strain, stress, psnr, defficientlineIntensity and efficientlineIntensity in modified ang file!")
+        ut.add_band_results_to_hdf5(self.modified_data_path, arrays)
+        ut.save_band_data_to_ang(self.in_ang_path, desired_hkl, arrays)
 
-        # Store datasets in HDF5
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/efficientlineIntensity",
-                              data=efficientlineIntensity_array)  # New dataset
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/defficientlineIntensity",
-                              data=defficientlineIntensity_array)  # New dataset
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
-
-        logging.info("Added Band_Width, psnr, defficientlineIntensity, efficientlineIntensity data to HDF5 file.")
-
-    logging.info("Process completed. Results saved to Excel files and modified .ang file.")
-
-    end_time = time.time()  # End timing
-    logging.info(f"The total processing time is : {end_time - start_time} seconds")
-
-    # Optional visualization
+        logging.info("Process completed. Results saved to Excel files and modified .ang file.")
+        end_time = time.time()
+        logging.info(f"The total processing time is : {end_time - self.start_time} seconds")
 
 
 if __name__ == "__main__":
-    main()
+    BandWidthAutomator().run()
 
 
 
