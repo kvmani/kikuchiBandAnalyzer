@@ -12,14 +12,13 @@ from orix.crystal_map import Phase, PhaseList
 from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
-from hyperspy.utils.markers import Texts
+from hyperspy.utils.markers import text
 import pandas as pd
-
-import h5py
+from kikuchiBandWidthDetector import process_kikuchi_images
+from kikuchiBandWidthDetector import save_results_to_excel
 import shutil
-
+import h5py
 import utilities as ut
-from kikuchiBandWidthDetector import process_kikuchi_images, save_results_to_excel
 import configLoader
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -81,11 +80,7 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 y = y.squeeze()
 
                 # Create a text marker with the label for each Kikuchi line
-                text_marker = Texts(
-                    [[x, y]],
-                    texts=[filtered_texts[i]],
-                    **kw,
-                )
+                text_marker = text(x=x, y=y, text=filtered_texts[i], **kw)
                 kikuchi_line_label_list.append(text_marker)
 
                 # Vectorized approach to fill kikuchi_line_dict_list
@@ -182,8 +177,6 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
 # Main function for testing the custom class
 class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
     def on_detector(self, detector, rotations):
-        # Call the base class method `on_detector`, which internally processes the lines and zone_axes
-        # Let the base class handle this part
         result = super().on_detector(detector, rotations)
 
         # Now, return the custom GeometricalKikuchiPatternSimulation using the same components
@@ -192,7 +185,9 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
         )
 
 
-# Wrapper class encapsulating the full workflow
+# Use this CustomKikuchiPatternSimulator in the main method
+
+
 class BandWidthAutomator:
     def __init__(self, config_path="bandDetectorOptionsDebug.yml"):
         self.config = configLoader.load_config(config_path)
@@ -231,7 +226,7 @@ class BandWidthAutomator:
                 space_group=phase_config["space_group"],
                 structure=Structure(
                     lattice=Lattice(*phase_config["lattice"]),
-                    atoms=[Atom(atom["element"], atom["position"]) for atom in phase_config["atoms"]],
+                    atoms=[Atom(a["element"], a["position"]) for a in phase_config["atoms"]],
                 ),
             ),
         )
@@ -261,6 +256,7 @@ class BandWidthAutomator:
 
         markers, grouped_kikuchi_dict_list = sim.as_markers(kikuchi_line_labels=True, desired_hkl=desired_hkl)
         s.add_marker(markers, plot_marker=False, permanent=True)
+        logging.info("Completed band identification for width estimation. Now starting the band width estimation!")
 
         skip_display_EBSDmap = config.get("skip_display_EBSDmap", False)
         if not skip_display_EBSDmap:
@@ -292,31 +288,45 @@ class BandWidthAutomator:
             target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
             ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
 
-        arrays = {
-            "Band_Width": np.zeros_like(ci_data, dtype="float32"),
-            "psnr": np.zeros_like(ci_data, dtype="float32"),
-            "efficientlineIntensity": np.zeros_like(ci_data, dtype="float32"),
-            "defficientlineIntensity": np.zeros_like(ci_data, dtype="float32"),
-            "efficientDefficientRatio": np.zeros_like(ci_data, dtype="float32"),
-        }
+        max_index = df["Ind"].max()
+        if max_index >= len(ci_data):
+            logging.error("Maximum index in 'Ind' exceeds length of /Nickel/EBSD/Data/CI.")
+            return
+
+        band_width_array = np.zeros_like(ci_data, dtype="float32")
+        psnr_array = np.zeros_like(ci_data, dtype="float32")
+        efficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")
+        defficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")
+        efficientDefficientRatio_array = np.zeros_like(ci_data, dtype="float32")
 
         for idx, bw, ps, eff, deff, ratio in zip(
                 df["Ind"], df["Band Width"], df["psnr"],
                 df["efficientlineIntensity"], df["defficientlineIntensity"], df["efficientDefficientRatio"]):
-            arrays["Band_Width"][idx] = bw
-            arrays["psnr"][idx] = ps
-            arrays["efficientlineIntensity"][idx] = eff
-            arrays["defficientlineIntensity"][idx] = deff
-            arrays["efficientDefficientRatio"][idx] = ratio
+            band_width_array[idx] = bw
+            psnr_array[idx] = ps
+            efficientlineIntensity_array[idx] = eff
+            defficientlineIntensity_array[idx] = deff
+            efficientDefficientRatio_array[idx] = ratio
 
         desired_hkl_ref_width = config["desired_hkl_ref_width"]
-        arrays["strain"] = (arrays["Band_Width"] - desired_hkl_ref_width) / desired_hkl_ref_width
+        band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
         elastic_modulus = float(config["elastic_modulus"])
-        arrays["stress"] = arrays["strain"] * elastic_modulus
+        band_stress_array = band_strain_array * elastic_modulus
 
-        ut.add_band_results_to_hdf5(self.modified_data_path, arrays)
+        arrays = {
+            "Band_Width": band_width_array,
+            "psnr": psnr_array,
+            "efficientlineIntensity": efficientlineIntensity_array,
+            "defficientlineIntensity": defficientlineIntensity_array,
+            "efficientDefficientRatio": efficientDefficientRatio_array,
+            "strain": band_strain_array,
+            "stress": band_stress_array,
+        }
+
         ut.save_band_data_to_ang(self.in_ang_path, desired_hkl, arrays)
+        ut.add_band_results_to_hdf5(self.modified_data_path, arrays)
 
+        logging.info("Added Band_Width, psnr, defficientlineIntensity, efficientlineIntensity data to HDF5 file.")
         logging.info("Process completed. Results saved to Excel files and modified .ang file.")
         end_time = time.time()
         logging.info(f"The total processing time is : {end_time - self.start_time} seconds")

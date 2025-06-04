@@ -1,13 +1,13 @@
 import os
-import json
-import re
-from collections import defaultdict
 import numpy as np
 import logging
 import h5py
 import shutil
 import random
 import matplotlib.pyplot as plt
+import json
+import re
+from collections import defaultdict
 
 def create_temp_file(original_path):
     """
@@ -298,7 +298,6 @@ def df_to_grouped_json(df):
 
 
 def remove_newlines_from_fields(json_str):
-    """Remove newline characters from 'central_line', 'line_mid_xy', and 'x,y'."""
     central_line_pattern = r'("central_line":\s*\[[^\]]*\])'
     line_mid_xy_pattern = r'("line_mid_xy":\s*\[[^\]]*\])'
     xy_pattern = r'("x,y":\s*\[[^\]]*\])'
@@ -383,14 +382,30 @@ def main():
     test_file = r"C:\Users\kvman\Downloads\IS_Ni_ebsd_data\Nickel_modified.ang"
     nrows = 231
     ncols_even = 184
-    #headers = [
-    #    "# HEADER: Start",
-    #    "# Mock data for testing",
-    #    "# HEADER: End",
-    #]
+    # Sample headers and column headers for mock file creation
+    _headers = [
+        "# HEADER: Start",
+        "# Mock data for testing",
+        "# HEADER: End",
+    ]
+    _column_headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS_Bottom",
+        "PRIAS_Middle",
+        "PRIAS_Top",
+    ]
 
     # Create a mock .ang file
-    #create_mock_ang_file(test_file, nrows, ncols_even, headers)
+    #create_mock_ang_file(test_file, nrows, ncols_even, headers, column_headers)
     logging.info(f"Mock .ang file created: {test_file}")
 
     # Generate random replacement data
