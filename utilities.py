@@ -2,7 +2,6 @@ import os
 import json
 import re
 from collections import defaultdict
-import pandas as pd
 import numpy as np
 import logging
 import h5py
@@ -37,7 +36,6 @@ def sanity_check_reordering(patterns, reordered_patterns, nRows, nCols, debug=Fa
         nCols (int): Number of columns in the EBSD grid.
         debug (bool): Whether to plot debug information.
     """
-    total_pixels = nRows * nCols
     mismatches = []
 
     for row in range(nRows):
@@ -385,16 +383,14 @@ def main():
     test_file = r"C:\Users\kvman\Downloads\IS_Ni_ebsd_data\Nickel_modified.ang"
     nrows = 231
     ncols_even = 184
-    headers = [
-        "# HEADER: Start",
-        "# Mock data for testing",
-        "# HEADER: End"
-    ]
-    column_headers = ["phi1", "PHI", "phi2", "x", "y", "IQ", "CI", "Phase index", "SEM", "Fit", "PRIAS_Bottom",
-                      "PRIAS_Middle", "PRIAS_Top"]
+    #headers = [
+    #    "# HEADER: Start",
+    #    "# Mock data for testing",
+    #    "# HEADER: End",
+    #]
 
     # Create a mock .ang file
-    #create_mock_ang_file(test_file, nrows, ncols_even, headers, column_headers)
+    #create_mock_ang_file(test_file, nrows, ncols_even, headers)
     logging.info(f"Mock .ang file created: {test_file}")
 
     # Generate random replacement data
