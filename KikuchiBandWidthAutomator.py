@@ -13,7 +13,10 @@ from orix.crystal_map import Phase, PhaseList
 from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
-from hyperspy.utils.markers import line_segment, point, text
+#from hyperspy.utils.markers import line_segment, point, text
+from hyperspy.utils.markers import text
+
+
 import pandas as pd
 from collections import defaultdict
 import json
@@ -22,6 +25,19 @@ from kikuchiBandWidthDetector import save_results_to_excel
 import shutil
 import h5py
 import utilities as ut
+from packaging.version import parse as _v
+import hyperspy.api as hs
+
+_HS_VERSION = _v(hs.__version__)
+
+if _HS_VERSION < _v("2.0"):
+    from hyperspy.utils.markers import text as _Text
+    def make_text_marker(x, y, label, **kw):
+        return _Text(x=x, y=y, text=label, **kw)
+else:
+    def make_text_marker(x, y, label, **kw):
+        # HyperSpy ≥ 2.0
+        return hs.plot.markers.Texts(offsets=(x, y), texts=[label], **kw)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -175,7 +191,8 @@ class CustomGeometricalKikuchiPatternSimulation(GeometricalKikuchiPatternSimulat
                 y = y.squeeze()
 
                 # Create a text marker with the label for each Kikuchi line
-                text_marker = text(x=x, y=y, text=filtered_texts[i], **kw)
+                #text_marker = text(x=x, y=y, text=filtered_texts[i], **kw)
+                text_marker = make_text_marker(x, y, filtered_texts[i], **kw)
                 kikuchi_line_label_list.append(text_marker)
 
                 # Vectorized approach to fill kikuchi_line_dict_list
@@ -292,8 +309,8 @@ def main():
     # Load configuration
     start_time = time.time()
     # config = load_config(file_path="bandDetectorOptions.yml")
-    # config = load_config(file_path="bandDetectorOptionsDebug.yml")
-    config = load_config(file_path="bandDetectorOptionsHcp.yml")
+    config = load_config(file_path="bandDetectorOptionsDebug.yml")
+    #config = load_config(file_path="bandDetectorOptionsHcp.yml")
     # config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
     # config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
 
