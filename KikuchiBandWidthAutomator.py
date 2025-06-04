@@ -286,42 +286,22 @@ class BandWidthAutomator:
 
         with h5py.File(self.modified_data_path, "a") as h5file:
             target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
-            ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
+            ci_len = len(h5file[f"/{target_dataset_name}/EBSD/Data/CI"])
 
         max_index = df["Ind"].max()
-        if max_index >= len(ci_data):
+        if max_index >= ci_len:
             logging.error("Maximum index in 'Ind' exceeds length of /Nickel/EBSD/Data/CI.")
             return
 
-        band_width_array = np.zeros_like(ci_data, dtype="float32")
-        psnr_array = np.zeros_like(ci_data, dtype="float32")
-        efficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")
-        defficientlineIntensity_array = np.zeros_like(ci_data, dtype="float32")
-        efficientDefficientRatio_array = np.zeros_like(ci_data, dtype="float32")
-
-        for idx, bw, ps, eff, deff, ratio in zip(
-                df["Ind"], df["Band Width"], df["psnr"],
-                df["efficientlineIntensity"], df["defficientlineIntensity"], df["efficientDefficientRatio"]):
-            band_width_array[idx] = bw
-            psnr_array[idx] = ps
-            efficientlineIntensity_array[idx] = eff
-            defficientlineIntensity_array[idx] = deff
-            efficientDefficientRatio_array[idx] = ratio
-
         desired_hkl_ref_width = config["desired_hkl_ref_width"]
-        band_strain_array = (band_width_array - desired_hkl_ref_width) / desired_hkl_ref_width
         elastic_modulus = float(config["elastic_modulus"])
-        band_stress_array = band_strain_array * elastic_modulus
 
-        arrays = {
-            "Band_Width": band_width_array,
-            "psnr": psnr_array,
-            "efficientlineIntensity": efficientlineIntensity_array,
-            "defficientlineIntensity": defficientlineIntensity_array,
-            "efficientDefficientRatio": efficientDefficientRatio_array,
-            "strain": band_strain_array,
-            "stress": band_stress_array,
-        }
+        arrays = ut.compute_band_arrays(
+            df,
+            ci_len,
+            desired_hkl_ref_width,
+            elastic_modulus,
+        )
 
         ut.save_band_data_to_ang(self.in_ang_path, desired_hkl, arrays)
         ut.add_band_results_to_hdf5(self.modified_data_path, arrays)

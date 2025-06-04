@@ -341,6 +341,42 @@ def save_band_data_to_ang(ang_path, desired_hkl, arrays):
     modify_ang_file(ang_path, **ut_args)
 
 
+def compute_band_arrays(df, ci_len, ref_width, elastic_modulus):
+    """Return dictionary of result arrays from the filtered band DataFrame."""
+    band_width_array = np.zeros(ci_len, dtype="float32")
+    psnr_array = np.zeros(ci_len, dtype="float32")
+    eff_int_array = np.zeros(ci_len, dtype="float32")
+    deff_int_array = np.zeros(ci_len, dtype="float32")
+    ratio_array = np.zeros(ci_len, dtype="float32")
+
+    for idx, bw, ps, eff, deff, ratio in zip(
+        df["Ind"],
+        df["Band Width"],
+        df["psnr"],
+        df["efficientlineIntensity"],
+        df["defficientlineIntensity"],
+        df["efficientDefficientRatio"],
+    ):
+        band_width_array[idx] = bw
+        psnr_array[idx] = ps
+        eff_int_array[idx] = eff
+        deff_int_array[idx] = deff
+        ratio_array[idx] = ratio
+
+    strain_array = (band_width_array - ref_width) / ref_width
+    stress_array = strain_array * elastic_modulus
+
+    return {
+        "Band_Width": band_width_array,
+        "psnr": psnr_array,
+        "efficientlineIntensity": eff_int_array,
+        "defficientlineIntensity": deff_int_array,
+        "efficientDefficientRatio": ratio_array,
+        "strain": strain_array,
+        "stress": stress_array,
+    }
+
+
 def create_mock_ang_file(file_path, nrows, ncols_even, headers, column_headers):
     """
     Creates a mock .ang file for testing purposes.
