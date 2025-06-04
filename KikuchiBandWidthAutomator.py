@@ -14,7 +14,7 @@ from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
 #from hyperspy.utils.markers import line_segment, point, text
-from hyperspy.utils.markers import text
+
 
 
 import pandas as pd
