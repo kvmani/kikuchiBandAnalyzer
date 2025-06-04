@@ -291,8 +291,9 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
 def main():
     # Load configuration
     start_time = time.time()
-    config = load_config(file_path="bandDetectorOptions.yml")
-    config = load_config(file_path="bandDetectorOptionsDebug.yml")
+    # config = load_config(file_path="bandDetectorOptions.yml")
+    # config = load_config(file_path="bandDetectorOptionsDebug.yml")
+    config = load_config(file_path="bandDetectorOptionsHcp.yml")
     # config = load_config(file_path="bandDetectorOptionsMagnetite.yml")
     # config = load_config(file_path="bandDetectorOptionsHeamatite.yml")
 

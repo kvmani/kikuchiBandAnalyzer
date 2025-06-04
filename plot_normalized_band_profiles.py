@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-plot_profiles.py – Plot several two-column (x,y) CSV files on one graph.
+plot_profiles.py – Plot several two-column (x,y) CSV files on one graph and export the scaled data to Excel.
 
-Example
--------
+Example:
 python plot_profiles.py 4X4_Raw.csv 1X1_GroundTruth.csv 1X1_ML_Processed.csv \
        --x-scales "1.7,1.0,1.0" --font-size 12 \
        --colors "C0,C1,C2" --styles "solid,dashed,dotted" \
@@ -16,31 +15,28 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import pandas as pd
 
-# ───────────────────────── helper utilities ─────────────────────────
+
 def _has_header(path: str) -> bool:
-    """Detect if the first non-blank row is textual (header)."""
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
-            if line:                          # first non-blank
+            if line:
                 return not line[0].isdigit()
     return False
 
 
 def load_profile(path: str):
-    """Load two-column CSV, automatically skipping one header row (if any)."""
     skip = 1 if _has_header(path) else 0
     x, y = np.loadtxt(path, delimiter=",", skiprows=skip, unpack=True)
     return x, y
 
 
 def infinite_cycle(seq):
-    """Yield items of *seq* forever (useful for styling lists)."""
     return itertools.cycle(seq)
 
 
-# ─────────────────────────── plotting core ──────────────────────────
 def plot_profiles(
     files,
     x_scales=None,
@@ -61,51 +57,57 @@ def plot_profiles(
     widths = widths or default_widths
     x_scales = x_scales or [1.0] * len(files)
 
-    fig, ax = plt.subplots()                   # use explicit Axes object
+    fig, ax = plt.subplots()
 
     col_iter = itertools.cycle(colors)
     sty_iter = itertools.cycle(styles)
     w_iter = itertools.cycle(widths)
-    scale_iter = itertools.cycle(x_scales)
 
-    for f in files:
-        x, y = load_profile(f)
-        scale = next(scale_iter)
+    series_list = []
+
+    for file, scale in zip(files, x_scales):
+        x, y = load_profile(file)
+        x_scaled = x * scale
+        label = os.path.basename(file)[:-4]
         ax.plot(
-            x * scale,
+            x_scaled,
             y,
             color=next(col_iter),
             linestyle=next(sty_iter),
             linewidth=next(w_iter),
-            label=os.path.basename(f)[:-4],
+            label=label,
         )
+        # Prepare labeled Series for Excel
+        series_list.append(pd.Series(x_scaled, name=f"Scaled X ({label})"))
+        series_list.append(pd.Series(y, name=f"Y ({label})"))
 
-    # axis labels with larger font
     ax.set_xlabel("Distance in Pixels", fontsize=font_size + 8)
     ax.set_ylabel("Normalized Profile", fontsize=font_size + 8)
 
-    # ax.xaxis.set_major_locator(mticker.LinearLocator(4))
-    # ax.yaxis.set_major_locator(mticker.LinearLocator(4))
-
-    # Set minor ticks (4 intervals between major ticks)
     ax.xaxis.set_minor_locator(mticker.AutoMinorLocator(5))
     ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(5))
 
-    # tick labels larger and minor ticks every 1/5th of major interval
     ax.tick_params(axis="both", which="major", labelsize=font_size + 4)
     ax.tick_params(axis="both", which="minor", labelsize=font_size + 2)
-    ax.xaxis.set_minor_locator(mticker.AutoMinorLocator(5))   # 4 minors between majors
-    ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(5))
 
     ax.legend(fontsize=font_size + 2)
     fig.tight_layout()
 
+    # Save figure if requested
     if out_path:
         fig.savefig(out_path, dpi=300)
+        excel_path = os.path.splitext(out_path)[0] + "_export.xlsx"
     else:
         plt.show()
+        excel_path = "profiles_export.xlsx"
 
-# ────────────────────────── command-line I/O ────────────────────────
+    # Export to Excel using concatenation (handles varying lengths)
+    df = pd.concat(series_list, axis=1)
+    df.index.name = "Index"
+    df.to_excel(excel_path, index=True)
+    print(f"[INFO] Exported scaled profile data to: {excel_path}")
+
+
 def parse_cli():
     p = argparse.ArgumentParser(description="Plot multiple x-y CSV profiles.")
     p.add_argument("files", nargs="+", help="CSV files with two columns: x,y")
@@ -115,31 +117,16 @@ def parse_cli():
         help="Comma-separated list of x scale factors (one per file, default 1)",
     )
     p.add_argument("--font-size", type=int, default=12, help="Base font size")
-    p.add_argument(
-        "--colors",
-        default="",
-        help='Comma-sep list of colors (e.g. "C0,#ff0000,C2")',
-    )
-    p.add_argument(
-        "--styles",
-        default="",
-        help='Comma-sep list of line styles (e.g. "solid,dashed,dotted")',
-    )
-    p.add_argument(
-        "--widths",
-        default="",
-        help='Comma-sep list of line widths (e.g. "1.5,2,1.5")',
-    )
-    p.add_argument(
-        "--output", "-o", help="Save figure instead of showing (file name)"
-    )
+    p.add_argument("--colors", default="", help='Comma-sep list of colors (e.g. "C0,#ff0000,C2")')
+    p.add_argument("--styles", default="", help='Comma-sep list of line styles (e.g. "solid,dashed,dotted")')
+    p.add_argument("--widths", default="", help='Comma-sep list of line widths (e.g. "1.5,2,1.5")')
+    p.add_argument("--output", "-o", help="Save figure instead of showing (file name)")
     return p.parse_args()
 
 
 def main():
     args = parse_cli()
 
-    # Convert comma-separated CLI strings to lists (allow empty string)
     def to_list(s, cast=str):
         return [cast(v) for v in s.split(",")] if s else None
 
@@ -147,6 +134,9 @@ def main():
     colors = to_list(args.colors, str)
     styles = to_list(args.styles, str)
     widths = to_list(args.widths, float)
+
+    if x_scales and len(x_scales) != len(args.files):
+        raise ValueError("Number of x-scales must match number of input files.")
 
     plot_profiles(
         args.files,
