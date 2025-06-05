@@ -36,4 +36,4 @@ min_psnr: 1.01               # Minimum peak signal-to-noise ratio for accepting 
 
 #plot_band_detection: true
 #plot_data_export_file_name: "4X4_Raw.csv"
-#skip_display_EBSDmap: true # set it true if you want to skip EBSD plot display
+skip_display_EBSDmap: true # set it true to skip EBSD plot display

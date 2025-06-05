@@ -16,6 +16,8 @@ hyperspy>=2.2,<3.0          # new API with hs.plot.markers.Texts :contentReferen
 kikuchipy>=0.11,<0.12       # requires HyperSpy ≥ 2.2 :contentReference[oaicite:1]{index=1}
 orix>=0.13,<0.14            # orientation-crystallography helpers (optional)
 pyxem>=0.18,<0.19           # 4D-STEM; harmless if unused
+pyebsdindex>=0.3,<0.4
+openpyxl>=3.1,<4.0
 
 # --- GUI / interactive extras ----------------------------------------------
 #pyqt5>=5.15,<5.16           # needed for TraitsUI viewer
