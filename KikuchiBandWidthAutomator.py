@@ -196,7 +196,7 @@ def main():
             "PRIAS_Center_Square": band_stress_array,
             "PRIAS_Top_Strip": psnr_array,
             "efficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
-            "defficientlineIntensity": efficientlineIntensity_array,  # Included here if needed
+            "defficientlineIntensity": defficientlineIntensity_array,  # Included here if needed
             "efficientDefficientRatio": efficientDefficientRatio_array  # Included here if needed
         }
 
