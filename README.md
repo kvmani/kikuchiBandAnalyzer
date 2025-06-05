@@ -14,19 +14,11 @@ This script processes EBSD (Electron Backscatter Diffraction) data from Kikuchi 
 
 ### Requirements
 
-The script requires the following Python libraries:
-- `pandas`
-- `numpy`
-- `matplotlib`
-- `yaml`
-- `openpyxl`
-- `kikuchipy`
-- `orix`
-- `diffpy.structure`
-
-To install these libraries, use:
+Install the required Python libraries using `requirements.txt`:
 ```bash
-pip install pandas numpy matplotlib pyyaml openpyxl kikuchipy orix diffpy.structure
+pip install -r requirements.txt
+```
+This installs dependencies such as `pyebsdindex` and `openpyxl` with compatible versions
 
 Files
 kikuchiIndexing.py : This is the main Python script that processes EBSD data and detects Kikuchi bands.
