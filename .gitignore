@@ -1,0 +1,10 @@
+__pycache__/
+*.log
+kikuchi_lines.json
+kikuchi_lines.xlsx
+testData/*_modified*.ang
+testData/*_bandOutputData.xlsx
+testData/*_filtered_band_data.xlsx
+testData/*_modified.h5
+testData/DA.h5
+testData/DA_temp.h5
