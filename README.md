@@ -21,7 +21,7 @@ Packages such as `pyebsdindex` and `openpyxl` are required and listed in the fil
 python KikuchiBandWidthAutomator.py
 ```
 
-The program loads the EBSD dataset, simulates Kikuchi patterns and writes results to Excel. Updated `.ang` files are created in the same folder as the input data, e.g. `DA_modified_002_band_width.ang`.
+The program loads the EBSD dataset, simulates Kikuchi patterns and writes results to CSV. Updated `.ang` files are created in the same folder as the input data, e.g. `DA_modified_002_band_width.ang`.
 
 ## Code Structure
 
