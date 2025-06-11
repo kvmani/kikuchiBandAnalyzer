@@ -286,11 +286,17 @@ def save_results_to_json(results, output_path="bandOutputData.json"):
     print(output_path)
 
 
-def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_excel_path='filtered_band_data.xlsx'):
-    """
-    Saves the processed results to an Excel (.xlsx) file.
-    :param results: List of dictionaries with processed band data.
-    :param output_path: Path to save the Excel output file.
+def save_results_to_csv(results, output_path="bandOutputData.csv", filtered_csv_path="filtered_band_data.csv"):
+    """Save processed results to CSV files.
+
+    Parameters
+    ----------
+    results : list of dict
+        Processed band data.
+    output_path : str
+        CSV file containing all detected bands.
+    filtered_csv_path : str
+        CSV file containing one band per index (highest PSNR).
     """
     # Convert the list of dictionaries to a pandas DataFrame
     data = []
@@ -338,13 +344,12 @@ def save_results_to_excel(results, output_path="bandOutputData.xlsx",filtered_ex
 
     # Create a DataFrame
     df = pd.DataFrame(data).round(3)
-    # Save the DataFrame to an Excel file
-    df.to_excel(output_path, index=False, engine='openpyxl')
+    df.to_csv(output_path, index=False)
     logging.info(f"Results saved to {output_path}.")
 
     df_filtered = df[df['band_valid'] == True]
     df_grouped = df_filtered.loc[df_filtered.groupby('Ind')['psnr'].idxmax()]
-    df_grouped.to_excel(filtered_excel_path, index=False, engine='openpyxl')
+    df_grouped.to_csv(filtered_csv_path, index=False)
 
 from PIL import Image
 import numpy as np
@@ -520,4 +525,4 @@ if __name__ == "__main__":
             config=config,
         )
 
-    save_results_to_excel(processed_results, "sumit_bandOutputData.xlsx")
+    save_results_to_csv(processed_results, "sumit_bandOutputData.csv")

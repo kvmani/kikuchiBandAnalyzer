@@ -16,7 +16,7 @@ import numpy as np
 #from hyperspy.utils.markers import line_segment, point, text
 import pandas as pd
 from kikuchiBandWidthDetector import process_kikuchi_images
-from kikuchiBandWidthDetector import save_results_to_excel
+from kikuchiBandWidthDetector import save_results_to_csv
 import shutil
 import h5py
 import utilities as ut
@@ -141,20 +141,20 @@ def main():
     ebsd_data = s.data  # EBSD dataset where each (row, col) contains the Kikuchi pattern (2D numpy array)
     processed_results = process_kikuchi_images(ebsd_data, grouped_kikuchi_dict_list, desired_hkl=desired_hkl,
                                                config=config)
-    output_excel_path = os.path.join(output_dir, f"{base_name}_bandOutputData.xlsx")
-    filtered_excel_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.xlsx")
-    save_results_to_excel(processed_results, output_excel_path, filtered_excel_path)
+    output_csv_path = os.path.join(output_dir, f"{base_name}_bandOutputData.csv")
+    filtered_csv_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.csv")
+    save_results_to_csv(processed_results, output_csv_path, filtered_csv_path)
 
-    # Modified section of your calling code after reading Excel:
-    df = pd.read_excel(filtered_excel_path)
+    # Load the filtered CSV results
+    df = pd.read_csv(filtered_csv_path)
 
     # Check columns
     required_columns = ["Band Width", "psnr", "efficientlineIntensity", "Ind", "defficientlineIntensity"]
     for col in required_columns:
         if col not in df.columns:
-            logging.error(f"{col} column not found in filtered_band_data.xlsx.")
+            logging.error(f"{col} column not found in filtered_band_data.csv.")
             return
-    logging.info("Loaded band_width, psnr,defficientlineIntensity and efficientlineIntensity data from Excel.")
+    logging.info("Loaded band_width, psnr, defficientlineIntensity and efficientlineIntensity data from CSV.")
 
     # Open the copied HDF5 file and add the data nodes
     with h5py.File(modified_data_path, "a") as h5file:
@@ -231,7 +231,7 @@ def main():
 
         logging.info("Added Band_Width, psnr, defficientlineIntensity, efficientlineIntensity data to HDF5 file.")
 
-    logging.info("Process completed. Results saved to Excel files and modified .ang file.")
+    logging.info("Process completed. Results saved to CSV files and modified .ang file.")
 
     end_time = time.time()  # End timing
     logging.info(f"The total processing time is : {end_time - start_time} seconds")
