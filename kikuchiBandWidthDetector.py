@@ -15,7 +15,7 @@ import time
 from typing import List, Dict, Any
 
 import cv2
-import yaml
+from configLoader import load_config
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -72,8 +72,8 @@ class BandDetector:
         return self._ensure_grayscale(image)
 
     def _load_config(self, path="bandDetectorOptionsMagnetite.yml"):
-        with open(path, "r") as f:
-            return yaml.safe_load(f)
+        """Wrapper around :func:`configLoader.load_config`."""
+        return load_config(path)
 
     # ─────────────────────────────────── public
     def detect_bands(self) -> List[Dict[str, Any]]:
@@ -152,11 +152,6 @@ def process_kikuchi_images_serial(ebsd_data, json_input,
 # ──────────────────────────────────────────────────────────────────────────────
 # Public processor (serial only: parallel stub removed for brevity)
 # ──────────────────────────────────────────────────────────────────────────────
-def load_config(path="bandDetectorOptionsMagnetite.yml"):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
-
-
 def process_kikuchi_images(ebsd_data, json_input,
                            config_file="bandWidthOptions.yml",
                            desired_hkl='111', config=None):

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.ticker as ticker  # Import ticker for minor ticks
+from distutils.util import strtobool
 
 
 def gaussian(x, amp, mean, stddev):
@@ -220,7 +221,15 @@ class RectangularAreaBandDetector:
             self.band_valid = False
             logging.debug("Band width detection failed.")
 
-        if self.plot_band_detection or eval(self.plot_band_detection_condition):
+        should_plot = False
+        try:
+            should_plot = strtobool(str(self.plot_band_detection_condition))
+        except ValueError:
+            logging.warning(
+                "Invalid value for plot_band_detection_condition: %s",
+                self.plot_band_detection_condition,
+            )
+        if self.plot_band_detection or should_plot:
             self.plot_debug(rotated_image, rect_corners, rect_area, summed_profile, band_start, band_end,
                             central_peak)
 
