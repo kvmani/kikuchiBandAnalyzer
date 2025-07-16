@@ -1,6 +1,6 @@
 # Kikuchi Pattern Processing and Band Width Detection
 
-This script processes EBSD (Electron Backscatter Diffraction) data from Kikuchi patterns, using a configurable `.yml` file for specifying all necessary inputs. The program performs data loading, cropping (for debugging), pattern simulation, and Kikuchi band width detection, saving the results in an Excel file.
+This script processes EBSD (Electron Backscatter Diffraction) data from Kikuchi patterns, using a configurable `.yml` file for specifying all necessary inputs. The program performs data loading, cropping (for debugging), pattern simulation, and Kikuchi band width detection, saving the results in CSV files.
 
 ## Features
 - **Configurable Input**: All key parameters, paths, and settings are provided via `bandDetectorOptions.yml`, making the script adaptable for different datasets and materials without modifying the code.
@@ -29,7 +29,7 @@ To install these libraries, use:
 pip install pandas numpy matplotlib pyyaml openpyxl kikuchipy orix diffpy.structure
 
 Files
-kikuchiIndexing.py : This is the main Python script that processes EBSD data and detects Kikuchi bands.
+`KikuchiBandWidthAutomator.py` is the main entry point for processing EBSD data and detecting Kikuchi bands.
 Configuration File: bandDetectorOptions.yml - Contains all input parameters, including file paths, material information, detection thresholds, and settings for debug and visualization options.
 Usage
 Step 1: Configure the .yml File
@@ -78,8 +78,8 @@ bash
 Copy code
 python script_name.py
 Step 3: View Output
-Full Data Output: The script saves a complete analysis to bandOutputData.xlsx based on all detected bands.
-Filtered Data: The filtered results, with PSNR-based grouping and other criteria, are saved to filtered_band_data.xlsx.
+Full Data Output: The script saves a complete analysis to `bandOutputData.csv` based on all detected bands.
+Filtered Data: The filtered results, with PSNR-based grouping and other criteria, are saved to `filtered_band_data.csv`.
 Code Walkthrough
 The script has three main stages:
 
@@ -93,14 +93,14 @@ Configures a detector using parameters in the .yml file.
 Simulates Kikuchi patterns using CustomKikuchiPatternSimulator, which generates markers and band labels based on the provided hkl_list.
 Band Width Detection:
 
-The process_kikuchi_images method performs band detection based on parameters specified in the .yml file, such as gradient_threshold, perpendicular_line_length, smoothing_sigma, and rectWidth.
-All floating-point values in the DataFrame are rounded to 3 decimal places before saving to Excel.
+The `process_kikuchi_images` method performs band detection based on parameters specified in the `.yml` file, such as `gradient_threshold`, `perpendicular_line_length`, `smoothing_sigma`, and `rectWidth`.
+All floating-point values in the DataFrame are rounded to three decimal places before saving to CSV.
 Filtering and Grouping Results:
 
-Filters results for valid bands, groups by Ind, and extracts entries with the highest PSNR for each group, saving the final processed data to filtered_band_data.xlsx.
+Filters results for valid bands, groups by `Ind`, and extracts entries with the highest PSNR for each group, saving the final processed data to `filtered_band_data.csv`.
 Example Output
-bandOutputData.xlsx: Contains all detected band properties, including band width and PSNR values, with floating-point numbers rounded to 3 decimal places.
-filtered_band_data.xlsx: Filtered data with the highest PSNR per band.
+`bandOutputData.csv`: Contains all detected band properties, including band width and PSNR values, with floating-point numbers rounded to three decimal places.
+`filtered_band_data.csv`: Filtered data with the highest PSNR per band.
 Logging and Debugging
 The script uses logging to track key steps:
 

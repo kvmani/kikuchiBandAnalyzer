@@ -1,7 +1,8 @@
 
 import time
-import warnings, os
-import yaml
+import os
+from pathlib import Path
+from configLoader import load_config
 import logging
 
 import matplotlib.pyplot as plt
@@ -43,12 +44,6 @@ else:
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def load_config(file_path="bandDetectorOptions.yml"):
-    with open(file_path, "r") as file:
-        config = yaml.safe_load(file)
-    return config
 
 
 GeometricalKikuchiPatternSimulation = kp.simulations.GeometricalKikuchiPatternSimulation
@@ -242,171 +237,222 @@ class CustomKikuchiPatternSimulator(KikuchiPatternSimulator):
             detector, rotations, result.reflectors, result._lines, result._zone_axes
         )
 
+class BandWidthAutomator:
+    """Pipeline wrapper for band-width detection."""
+
+    def __init__(self, config_path: str = "bandDetectorOptionsDebug.yml"):
+        self.config = load_config(config_path)
+        self.data_path = Path(self.config.get("h5_file_path", "path_to_default_file.h5"))
+        self.output_dir = self.data_path.parent
+        self.base_name = self.data_path.stem
+        self.modified_data_path = self.output_dir / f"{self.base_name}_modified.h5"
+        self.in_ang_path = self.output_dir / f"{self.base_name}.ang"
+        self.dataset = None
+        self.grouped_dict_list = None
+
+    # ------------------------------------------------------------------
+    def prepare_dataset(self):
+        path = self.data_path
+        if path.suffix == ".oh5":
+            new_data_path = path.with_suffix(".h5")
+            shutil.copy(path, new_data_path)
+            logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
+            path = new_data_path
+            self.data_path = new_data_path
+
+        shutil.copy(path, self.modified_data_path)
+        logging.info(f"Copied HDF5 file to: {self.modified_data_path}")
+
+        logging.info(f"Loading dataset from: {path}")
+        self.dataset = kp.load(path, lazy=False)
+
+        if self.config.get("debug", False):
+            crop_start = self.config.get("crop_start", 5)
+            crop_end = self.config.get("crop_end", 25)
+            logging.info("Debug mode enabled: Cropping data for faster processing.")
+            self.dataset.crop(1, start=crop_start, end=crop_end + 10)
+            self.dataset.crop(0, start=crop_start, end=crop_end)
+
+    # ------------------------------------------------------------------
+    def simulate_and_index(self):
+        phase_cfg = self.config["phase_list"]
+        phase_list = PhaseList(
+            Phase(
+                name=phase_cfg["name"],
+                space_group=phase_cfg["space_group"],
+                structure=Structure(
+                    lattice=Lattice(*phase_cfg["lattice"]),
+                    atoms=[Atom(at["element"], at["position"]) for at in phase_cfg["atoms"]],
+                ),
+            ),
+        )
+        hkl_list = self.config["hkl_list"]
+        header_data = ut.extract_header_data(str(self.modified_data_path))
+
+        sig_shape = self.dataset.axes_manager.signal_shape[::-1]
+        det = kp.detectors.EBSDDetector(
+            sig_shape,
+            sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
+            tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
+            azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
+            convention="edax",
+            pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0))),
+        )
+
+        indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
+        xmap, index_data, indexed_band_data = self.dataset.hough_indexing(
+            phase_list=phase_list,
+            indexer=indexer,
+            return_index_data=True,
+            return_band_data=True,
+            verbose=1,
+        )
+
+        ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list).symmetrise()
+        simulator = CustomKikuchiPatternSimulator(ref)
+        sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
+
+        desired_hkl = self.config.get("desired_hkl", "111")
+        markers, grouped_dict_list = sim.as_markers(
+            kikuchi_line_labels=True, desired_hkl=desired_hkl
+        )
+        self.dataset.add_marker(markers, plot_marker=False, permanent=True)
+        self.grouped_dict_list = grouped_dict_list
+
+        if not self.config.get("skip_display_EBSDmap", False):
+            v_ipf = Vector3d.xvector()
+            sym = xmap.phases[0].point_group
+            rgb = plot.IPFColorKeyTSL(sym, v_ipf).orientation2color(xmap.rotations)
+            maps_nav_rgb = kp.draw.get_rgb_navigator(rgb.reshape(xmap.shape + (3,)))
+            self.dataset.plot(maps_nav_rgb)
+            plt.show()
+
+    # ------------------------------------------------------------------
+    def detect_band_widths(self):
+        desired_hkl = self.config.get("desired_hkl", "111")
+        ebsd_data = self.dataset.data
+        return process_kikuchi_images(
+            ebsd_data,
+            self.grouped_dict_list,
+            desired_hkl=desired_hkl,
+            config=self.config,
+        )
+
+    # ------------------------------------------------------------------
+    def export_results(self, processed):
+        output_csv_path = self.output_dir / f"{self.base_name}_bandOutputData.csv"
+        filtered_csv_path = self.output_dir / f"{self.base_name}_filtered_band_data.csv"
+        save_results_to_csv(processed, str(output_csv_path), str(filtered_csv_path))
+
+        desired_hkl = self.config.get("desired_hkl", "111")
+
+        df = pd.read_csv(filtered_csv_path)
+        required_cols = [
+            "Band Width",
+            "psnr",
+            "efficientlineIntensity",
+            "Ind",
+            "defficientlineIntensity",
+        ]
+        for col in required_cols:
+            if col not in df.columns:
+                logging.error(f"{col} column not found in filtered_band_data.csv.")
+                return
+
+        logging.info(
+            "Loaded band_width, psnr, defficientlineIntensity, efficientlineIntensity from CSV."
+        )
+
+        with h5py.File(self.modified_data_path, "a") as h5file:
+            target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
+            ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
+
+            max_index = df["Ind"].max()
+            if max_index >= len(ci_data):
+                logging.error("Maximum index in 'Ind' exceeds CI dataset length.")
+                return
+
+            band_width_array = np.zeros_like(ci_data, dtype="float32")
+            psnr_array = np.zeros_like(ci_data, dtype="float32")
+            efficientIntensity_array = np.zeros_like(ci_data, dtype="float32")
+            defficientIntensity_array = np.zeros_like(ci_data, dtype="float32")
+            eff_ratio_array = np.zeros_like(ci_data, dtype="float32")
+
+            for idx, bw, psnr, effI, deffI, ratio in zip(
+                df["Ind"],
+                df["Band Width"],
+                df["psnr"],
+                df["efficientlineIntensity"],
+                df["defficientlineIntensity"],
+                df["efficientDefficientRatio"],
+            ):
+                band_width_array[idx] = bw
+                psnr_array[idx] = psnr
+                efficientIntensity_array[idx] = effI
+                defficientIntensity_array[idx] = deffI
+                eff_ratio_array[idx] = ratio
+
+            desired_ref_width = self.config["desired_hkl_ref_width"]
+            band_strain_array = (band_width_array - desired_ref_width) / desired_ref_width
+            elastic_modulus = float(self.config["elastic_modulus"])
+            band_stress_array = band_strain_array * elastic_modulus
+
+            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
+            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
+            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
+            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
+            ut.modify_ang_file(
+                self.in_ang_path,
+                f"{desired_hkl}_defficientlineIntensity",
+                IQ=defficientIntensity_array,
+            )
+            ut.modify_ang_file(
+                self.in_ang_path,
+                f"{desired_hkl}_efficientlineIntensity",
+                IQ=efficientIntensity_array,
+            )
+            ut.modify_ang_file(
+                self.in_ang_path,
+                f"{desired_hkl}_efficientDefficientRatio",
+                IQ=eff_ratio_array,
+            )
+            ut.modify_ang_file(
+                self.in_ang_path,
+                f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
+                IQ=band_width_array,
+                Fit=eff_ratio_array,
+            )
+
+            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
+            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
+            h5file.create_dataset(
+                f"/{target_dataset_name}/EBSD/Data/efficientlineIntensity",
+                data=efficientIntensity_array,
+            )
+            h5file.create_dataset(
+                f"/{target_dataset_name}/EBSD/Data/defficientlineIntensity",
+                data=defficientIntensity_array,
+            )
+            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
+            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
+
+            logging.info(
+                "Wrote Band_Width, strain, stress, psnr, efficient/defficient intensity to HDF5."
+            )
+
+    # ------------------------------------------------------------------
+    def run(self):
+        start_time = time.time()
+        self.prepare_dataset()
+        self.simulate_and_index()
+        processed = self.detect_band_widths()
+        self.export_results(processed)
+        logging.info("Process completed. Results saved to CSV files and modified .ang file.")
+        logging.info(f"Total processing time: {time.time() - start_time:.1f} s")
+
 
 # ---------------------------------------------------------------------- #
 #                               main()
 # ---------------------------------------------------------------------- #
 def main():
-    start_time = time.time()
-
-    config = load_config(file_path="bandDetectorOptionsDebug.yml")
-    data_path = config.get("h5_file_path", "path_to_default_file.h5")
-    output_dir = os.path.dirname(data_path)
-    base_name, ext = os.path.splitext(os.path.basename(data_path))
-
-    if ext == ".oh5":
-        new_data_path = os.path.join(output_dir, f"{base_name}.h5")
-        shutil.copy(data_path, new_data_path)
-        logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
-        data_path = new_data_path
-
-    temp_data_path = ut.create_temp_file(data_path)
-    modified_data_path = os.path.join(output_dir, f"{base_name}_modified.h5")
-
-    in_ang_path = os.path.join(output_dir, f"{base_name}.ang")
-    shutil.copy(data_path, modified_data_path)
-    logging.info(f"Copied HDF5 file to: {modified_data_path}")
-
-    crop_start, crop_end = config.get("crop_start", 5), config.get("crop_end", 25)
-    debug = config.get("debug", False)
-    desired_hkl = config.get("desired_hkl", "111")
-
-    logging.info(f"Loading dataset from: {data_path}")
-    s = kp.load(data_path, lazy=False)
-
-    if debug:
-        logging.info("Debug mode enabled: Cropping data for faster processing.")
-        s.crop(1, start=crop_start, end=crop_end + 10)
-        s.crop(0, start=crop_start, end=crop_end)
-
-    phase_cfg = config["phase_list"]
-    phase_list = PhaseList(
-        Phase(
-            name=phase_cfg["name"],
-            space_group=phase_cfg["space_group"],
-            structure=Structure(
-                lattice=Lattice(*phase_cfg["lattice"]),
-                atoms=[Atom(at["element"], at["position"]) for at in phase_cfg["atoms"]],
-            ),
-        ),
-    )
-    hkl_list = config["hkl_list"]
-    pc = config.get("pc", [0.545, 0.610, 0.6863])
-    header_data = ut.extract_header_data(modified_data_path)
-
-    sig_shape = s.axes_manager.signal_shape[::-1]
-    det = kp.detectors.EBSDDetector(
-        sig_shape,
-        sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
-        tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
-        azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
-        convention="edax",
-        pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0)))
-    )
-
-    indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
-    xmap, index_data, indexed_band_data = s.hough_indexing(
-        phase_list=phase_list, indexer=indexer,
-        return_index_data=True, return_band_data=True, verbose=1
-    )
-
-    ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list).symmetrise()
-    simulator = CustomKikuchiPatternSimulator(ref)
-    sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
-
-    markers, grouped_dict_list = sim.as_markers(
-        kikuchi_line_labels=True, desired_hkl=desired_hkl
-    )
-    s.add_marker(markers, plot_marker=False, permanent=True)
-    logging.info("Completed band identification; running band-width estimation.")
-
-    if not config.get("skip_display_EBSDmap", False):
-        v_ipf = Vector3d.xvector()
-        sym = xmap.phases[0].point_group
-        rgb = plot.IPFColorKeyTSL(sym, v_ipf).orientation2color(xmap.rotations)
-        maps_nav_rgb = kp.draw.get_rgb_navigator(rgb.reshape(xmap.shape + (3,)))
-        s.plot(maps_nav_rgb)
-        plt.show()
-
-    ebsd_data = s.data
-    processed = process_kikuchi_images(
-        ebsd_data, grouped_dict_list, desired_hkl=desired_hkl, config=config
-    )
-
-    output_csv_path   = os.path.join(output_dir, f"{base_name}_bandOutputData.csv")
-    filtered_csv_path = os.path.join(output_dir, f"{base_name}_filtered_band_data.csv")
-    save_results_to_csv(processed, output_csv_path, filtered_csv_path)
-
-    # -------------------------------------------------------------- #
-    #  Down-stream processing: use CSV instead of Excel
-    # -------------------------------------------------------------- #
-    df = pd.read_csv(filtered_csv_path)
-
-    required_cols = ["Band Width", "psnr", "efficientlineIntensity", "Ind",
-                     "defficientlineIntensity"]
-    for col in required_cols:
-        if col not in df.columns:
-            logging.error(f"{col} column not found in filtered_band_data.csv.")
-            return
-    logging.info("Loaded band_width, psnr, defficientlineIntensity, efficientlineIntensity from CSV.")
-
-    with h5py.File(modified_data_path, "a") as h5file:
-        target_dataset_name = next(name for name in h5file if name not in ["Manufacturer", "Version"])
-        ci_data = h5file[f"/{target_dataset_name}/EBSD/Data/CI"]
-
-        max_index = df["Ind"].max()
-        if max_index >= len(ci_data):
-            logging.error("Maximum index in 'Ind' exceeds CI dataset length.")
-            return
-
-        band_width_array           = np.zeros_like(ci_data, dtype="float32")
-        psnr_array                 = np.zeros_like(ci_data, dtype="float32")
-        efficientIntensity_array   = np.zeros_like(ci_data, dtype="float32")
-        defficientIntensity_array  = np.zeros_like(ci_data, dtype="float32")
-        eff_ratio_array            = np.zeros_like(ci_data, dtype="float32")
-
-        for idx, bw, psnr, effI, deffI, ratio in zip(
-                df["Ind"], df["Band Width"], df["psnr"],
-                df["efficientlineIntensity"], df["defficientlineIntensity"],
-                df["efficientDefficientRatio"]):
-            band_width_array[idx]          = bw
-            psnr_array[idx]                = psnr
-            efficientIntensity_array[idx]  = effI
-            defficientIntensity_array[idx] = deffI
-            eff_ratio_array[idx]           = ratio
-
-        desired_ref_width = config["desired_hkl_ref_width"]
-        band_strain_array = (band_width_array - desired_ref_width) / desired_ref_width
-        elastic_modulus   = float(config["elastic_modulus"])
-        band_stress_array = band_strain_array * elastic_modulus
-
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_strain",     IQ=band_strain_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_stress",     IQ=band_stress_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_psnr",       IQ=psnr_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_defficientlineIntensity",
-                           IQ=defficientIntensity_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientlineIntensity",
-                           IQ=efficientIntensity_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_efficientDefficientRatio",
-                           IQ=eff_ratio_array)
-        ut.modify_ang_file(in_ang_path, f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
-                           IQ=band_width_array, Fit=eff_ratio_array)
-
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr",       data=psnr_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/efficientlineIntensity",
-                              data=efficientIntensity_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/defficientlineIntensity",
-                              data=defficientIntensity_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain",     data=band_strain_array)
-        h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress",     data=band_stress_array)
-
-        logging.info("Wrote Band_Width, strain, stress, psnr, efficient/defficient intensity to HDF5.")
-
-    logging.info("Process completed. Results saved to CSV files and modified .ang file.")
-    logging.info(f"Total processing time: {time.time() - start_time:.1f} s")
-
-
-if __name__ == "__main__":
-    main()
+    BandWidthAutomator().run()

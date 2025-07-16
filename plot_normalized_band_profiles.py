@@ -19,6 +19,13 @@ import pandas as pd
 
 
 def _has_header(path: str) -> bool:
+    """Return ``True`` if the first non-empty line contains text.
+
+    Parameters
+    ----------
+    path : str
+        Path to the CSV file.
+    """
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -28,12 +35,25 @@ def _has_header(path: str) -> bool:
 
 
 def load_profile(path: str):
+    """Load a two-column profile from ``path``.
+
+    Parameters
+    ----------
+    path : str
+        CSV file containing ``x,y`` data.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Arrays of ``x`` and ``y`` values.
+    """
     skip = 1 if _has_header(path) else 0
     x, y = np.loadtxt(path, delimiter=",", skiprows=skip, unpack=True)
     return x, y
 
 
 def infinite_cycle(seq):
+    """Yield elements of ``seq`` in an endless cycle."""
     return itertools.cycle(seq)
 
 
