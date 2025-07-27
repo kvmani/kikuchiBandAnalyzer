@@ -1,4 +1,14 @@
 
+"""Automation entry point for batch Kikuchi band width detection.
+
+This script wraps the lower level detection utilities and provides a
+configuration driven pipeline.  The :class:`BandWidthAutomator` class loads
+an EBSD data set, simulates Kikuchi patterns, performs band width detection
+and finally exports all results.  It is intended to be run either in a normal
+mode, reading all options from a YAML configuration file, or in a debug mode
+where the data set is cropped and detailed logging is enabled.
+"""
+
 import time
 import os
 from pathlib import Path
@@ -7,7 +17,6 @@ import logging
 
 import matplotlib.pyplot as plt
 import kikuchipy as kp
-import re
 from orix import plot
 from diffsims.crystallography import ReciprocalLatticeVector
 from diffpy.structure import Atom, Lattice, Structure
@@ -32,9 +41,20 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 class BandWidthAutomator:
-    """Pipeline wrapper for band-width detection."""
+    """Automate band width detection for an EBSD data set.
+
+    Parameters
+    ----------
+    config_path : str, optional
+        Path to the YAML configuration file controlling the pipeline.  The
+        configuration describes the input HDF5/ANG files, material information
+        and all detection parameters.  ``bandDetectorOptionsDebug.yml`` is used
+        by default.
+    """
 
     def __init__(self, config_path: str = "bandDetectorOptionsDebug.yml"):
+        """Instantiate the automator and load the configuration."""
+
         self.config = load_config(config_path)
         self.data_path = Path(self.config.get("h5_file_path", "path_to_default_file.h5"))
         self.output_dir = self.data_path.parent
@@ -47,6 +67,8 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def prepare_dataset(self):
+        """Load the EBSD data set and optionally crop for debug mode."""
+
         path = self.data_path
         if path.suffix == ".oh5":
             new_data_path = path.with_suffix(".h5")
@@ -70,6 +92,7 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def simulate_and_index(self):
+        """Simulate Kikuchi patterns and determine band locations."""
         phase_cfg = self.config["phase_list"]
         phase_list = PhaseList(
             Phase(
@@ -124,6 +147,7 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def detect_band_widths(self):
+        """Run the :class:`KikuchiBatchProcessor` over all patterns."""
         desired_hkl = self.config.get("desired_hkl", "111")
         ebsd_data = self.dataset.data
         processor = KikuchiBatchProcessor(
@@ -136,6 +160,7 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def export_results(self, processed):
+        """Export CSV summaries and write results back into the HDF5 file."""
         output_csv_path = self.output_dir / f"{self.base_name}_bandOutputData.csv"
         filtered_csv_path = self.output_dir / f"{self.base_name}_filtered_band_data.csv"
         ut.save_results_to_csv(processed, str(output_csv_path), str(filtered_csv_path))
@@ -238,6 +263,8 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def run(self):
+        """Execute the complete pipeline."""
+
         start_time = time.time()
         self.prepare_dataset()
         self.simulate_and_index()
@@ -251,7 +278,9 @@ class BandWidthAutomator:
 #                               main()
 # ---------------------------------------------------------------------- #
 def main():
-    BWA  = BandWidthAutomator()
-    BWA.run()
+    """Convenience wrapper for command line execution."""
+
+    bwa = BandWidthAutomator()
+    bwa.run()
 if __name__ == "__main__":
     main()
