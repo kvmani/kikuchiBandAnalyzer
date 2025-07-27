@@ -1,9 +1,11 @@
 
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-Band-width detection workflow
-• Excel → CSV conversion (10 Jun 2025)
+"""Core band width detection utilities.
+
+This module contains the :class:`BandDetector` and
+:class:`KikuchiBatchProcessor` classes used by the automation pipeline.
+It can also be executed directly for standalone experiments.
 """
 
 import copy
@@ -40,8 +42,10 @@ logging.basicConfig(
 # Band-detector class
 # ──────────────────────────────────────────────────────────────────────────────
 class BandDetector:
+    """Detect band widths for a single Kikuchi pattern."""
     def __init__(self, image=None, image_path=None, points=None,
                  desired_hkl="111", config=None):
+        """Initialise the detector with either an image array or path."""
         if image is not None:
             if isinstance(image, da.Array):
                 self.image = image.compute()
@@ -58,6 +62,7 @@ class BandDetector:
 
     # ─────────────────────────────────── helpers
     def _ensure_grayscale(self, image):
+        """Ensure that the image is in grayscale format."""
         if len(image.shape) == 3 and image.shape[2] == 3:
             logging.info("Converting provided image to grayscale.")
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -66,6 +71,7 @@ class BandDetector:
         raise ValueError("Image must be 2-D grayscale or 3-D RGB/BGR.")
 
     def _load_image(self, image_path):
+        """Load an image from disk and convert it to grayscale."""
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"Could not load image: {image_path}")
@@ -78,6 +84,7 @@ class BandDetector:
 
     # ─────────────────────────────────── public
     def detect_bands(self) -> List[Dict[str, Any]]:
+        """Detect valid bands for all provided marker points."""
         results = []
         for point in self.points:
             hkl        = point["hkl"]
@@ -102,6 +109,7 @@ class BandDetector:
 
     # ─────────────────────────────────── internals
     def _detect_band(self, central_line, hkl):
+        """Run a detection strategy on a single band."""
         detector = RectangularAreaBandDetector(self.image,
                                                central_line,
                                                self.config,
@@ -110,13 +118,16 @@ class BandDetector:
 
 
 class KikuchiBatchProcessor:
+    """Process a grid of Kikuchi patterns and detect bands."""
     def __init__(self, ebsd_data, json_input, config=None, desired_hkl="111"):
+        """Store data and configuration for batch processing."""
         self.ebsd_data = ebsd_data
         self.json_input = json_input
         self.config = config if config is not None else load_config("bandWidthOptions.yml")
         self.desired_hkl = desired_hkl
 
     def process_kikuchi_image_at_pixel(self, row, col, json_entry):
+        """Process a single image from the EBSD grid."""
         image = self.ebsd_data[row, col]
         points = json_entry["points"]
         bdet = BandDetector(
@@ -140,6 +151,7 @@ class KikuchiBatchProcessor:
         return entry
 
     def _process_serial(self):
+        """Serial implementation used for all processing."""
         processed = []
         ncol = self.ebsd_data.shape[1]
         for row in tqdm(range(self.ebsd_data.shape[0]), desc="Processing rows"):
@@ -152,6 +164,7 @@ class KikuchiBatchProcessor:
         return processed
 
     def process(self):
+        """Process the entire data set and return results list."""
         start = time.time()
         processed = self._process_serial()
         dur = time.time() - start
@@ -165,6 +178,7 @@ class KikuchiBatchProcessor:
         return processed
 
 def _square_pattern(arr: np.ndarray, tol: float = 0.95) -> np.ndarray:
+    """Resize a pattern to square shape if necessary."""
     h, w = arr.shape
     if h == w:
         return arr
@@ -178,6 +192,7 @@ def _square_pattern(arr: np.ndarray, tol: float = 0.95) -> np.ndarray:
 
 
 def load_ebsd_data(source: str, tile_rows: int = 10, tile_cols: int = 10):
+    """Load EBSD patterns from an image folder or numpy array."""
     IMG_EXT = (".png", ".bmp")
 
     # folder of images
@@ -224,6 +239,7 @@ def load_ebsd_data(source: str, tile_rows: int = 10, tile_cols: int = 10):
 
 # ──────────────────────────────────────────────────────────────────────────────
 def prepare_json_input(path: str, n_patterns: int, tile_from_single: bool):
+    """Load JSON annotation file and repeat entries if required."""
     with open(path) as f:
         data = json.load(f)
     if tile_from_single:
