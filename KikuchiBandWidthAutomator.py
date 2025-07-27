@@ -249,6 +249,7 @@ class BandWidthAutomator:
         self.in_ang_path = self.output_dir / f"{self.base_name}.ang"
         self.dataset = None
         self.grouped_dict_list = None
+        logging.info('Justc ompleted the object initiation')
 
     # ------------------------------------------------------------------
     def prepare_dataset(self):
@@ -455,4 +456,7 @@ class BandWidthAutomator:
 #                               main()
 # ---------------------------------------------------------------------- #
 def main():
-    BandWidthAutomator().run()
+    BWA  = BandWidthAutomator()
+    BWA.run()
+if __name__ == "__main__":
+    main()

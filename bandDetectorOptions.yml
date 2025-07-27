@@ -34,7 +34,7 @@ strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangul
 rectWidth: 25              # Width of the rectangle for detection; typical values are 30-60
 min_psnr: 1.01               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
 
-#plot_band_detection: true
+plot_band_detection: true
 #plot_data_export_file_name: "4X4_Raw.csv"
 
 skip_display_EBSDmap: true # set it true if you want to skip EBSD plot display
