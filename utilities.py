@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import numpy as np
 import logging
@@ -268,6 +269,70 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
         f.writelines(modified_lines)
 
     logging.info(f"Modified file saved as: {new_file_path}")
+
+
+def convert_results(obj):
+    if isinstance(obj, dict):
+        return {k: convert_results(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [convert_results(i) for i in obj]
+    if isinstance(obj, (np.integer, np.floating)):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
+def save_results_to_json(results, path="bandOutputData.json"):
+    with open(path, "w") as f:
+        json.dump(convert_results(results), f, indent=4)
+    logging.info("Results saved to %s", path)
+
+
+def save_results_to_csv(results, raw_path="bandOutputData.csv", filtered_path="filtered_band_data.csv"):
+    rows = []
+    for res in results:
+        xy = res.get("x,y")
+        ind = res.get("ind")
+        for band in res["bands"]:
+            bw = band.get("bandWidth")
+            cpp = band.get("centralPeak")
+            valid = band.get("band_valid", False)
+            peak = band.get("band_peak", 0)
+            bkg = band.get("band_bkg", 0)
+            psnr = band.get("psnr", 0)
+            eff = band.get("efficientlineIntensity", 0)
+            deff = band.get("defficientlineIntensity", 0)
+            ratio = (
+                eff / deff if deff and eff and np.isfinite(eff) and np.isfinite(deff) else 0
+            )
+            rows.append(
+                {
+                    "X,Y": xy,
+                    "Ind": ind,
+                    "hkl": band.get("hkl"),
+                    "hkl_group": band.get("hkl_group", "unknown"),
+                    "Central Line": band.get("central_line"),
+                    "Line Distance": band.get("line_dist"),
+                    "Band Width": bw,
+                    "band_peak": peak,
+                    "band_bkg": bkg,
+                    "psnr": psnr,
+                    "efficientlineIntensity": eff,
+                    "defficientlineIntensity": deff,
+                    "efficientDefficientRatio": np.round(ratio, 2),
+                    "band_valid": valid,
+                }
+            )
+
+    df = pd.DataFrame(rows).round(3)
+    df.to_csv(raw_path, index=False)
+    logging.info("Raw results saved to %s", raw_path)
+
+    filt = df[df["band_valid"]]
+    best = filt.loc[filt.groupby("Ind")["psnr"].idxmax()]
+    best.to_csv(filtered_path, index=False)
+    logging.info("Filtered results saved to %s", filtered_path)
 
 
 def create_mock_ang_file(file_path, nrows, ncols_even, headers, column_headers):

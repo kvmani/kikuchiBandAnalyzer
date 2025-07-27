@@ -22,6 +22,7 @@ from tqdm import tqdm
 from PIL import Image
 import dask.array as da
 import matplotlib.pyplot as plt
+import utilities as ut
 
 from strategies import RectangularAreaBandDetector
 
@@ -107,140 +108,62 @@ class BandDetector:
                                                hkl)
         return detector.detect()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Single-pattern processing helper
-# ──────────────────────────────────────────────────────────────────────────────
-def process_kikuchi_image_at_pixel(row, col, ebsd_data,
-                                   json_entry, desired_hkl, config):
-    image   = ebsd_data[row, col]
-    points  = json_entry["points"]
-    bdet    = BandDetector(image=image,
-                           points=points,
-                           desired_hkl=desired_hkl,
-                           config=config)
-    try:
-        results = bdet.detect_bands()
-    except Exception as e:
-        logging.warning("pattern [%d,%d] error: %s", row, col, e)
-        results = []
 
-    entry = json_entry.copy()
-    entry.update({
-        "bands": results,
-        "x,y": [row, col],
-        "ind": row * ebsd_data.shape[1] + col
-    })
-    return entry
+class KikuchiBatchProcessor:
+    def __init__(self, ebsd_data, json_input, config=None, desired_hkl="111"):
+        self.ebsd_data = ebsd_data
+        self.json_input = json_input
+        self.config = config if config is not None else load_config("bandWidthOptions.yml")
+        self.desired_hkl = desired_hkl
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Serial processing of all patterns
-# ──────────────────────────────────────────────────────────────────────────────
-def process_kikuchi_images_serial(ebsd_data, json_input,
-                                  desired_hkl, config):
-    processed = []
-    ncol = ebsd_data.shape[1]
+    def process_kikuchi_image_at_pixel(self, row, col, json_entry):
+        image = self.ebsd_data[row, col]
+        points = json_entry["points"]
+        bdet = BandDetector(
+            image=image,
+            points=points,
+            desired_hkl=self.desired_hkl,
+            config=self.config,
+        )
+        try:
+            results = bdet.detect_bands()
+        except Exception as e:
+            logging.warning("pattern [%d,%d] error: %s", row, col, e)
+            results = []
 
-    for row in tqdm(range(ebsd_data.shape[0]), desc="Processing rows"):
-        for col in range(ebsd_data.shape[1]):
-            idx = ncol * row + col
-            entry = process_kikuchi_image_at_pixel(
-                row, col, ebsd_data, json_input[idx],
-                desired_hkl, config)
-            processed.append(entry)
-    return processed
+        entry = json_entry.copy()
+        entry.update({
+            "bands": results,
+            "x,y": [row, col],
+            "ind": row * self.ebsd_data.shape[1] + col,
+        })
+        return entry
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Public processor (serial only: parallel stub removed for brevity)
-# ──────────────────────────────────────────────────────────────────────────────
-def process_kikuchi_images(ebsd_data, json_input,
-                           config_file="bandWidthOptions.yml",
-                           desired_hkl='111', config=None):
-    if config is None:
-        config = load_config(config_file)
+    def _process_serial(self):
+        processed = []
+        ncol = self.ebsd_data.shape[1]
+        for row in tqdm(range(self.ebsd_data.shape[0]), desc="Processing rows"):
+            for col in range(self.ebsd_data.shape[1]):
+                idx = ncol * row + col
+                entry = self.process_kikuchi_image_at_pixel(
+                    row, col, self.json_input[idx]
+                )
+                processed.append(entry)
+        return processed
 
-    start = time.time()
-    processed = process_kikuchi_images_serial(ebsd_data,
-                                              json_input,
-                                              desired_hkl,
-                                              config)
-    dur = time.time() - start
-    n_patterns = np.prod(ebsd_data.shape[:2])
-    logging.info("Processed %d patterns in %.2f s "
-                 "(%.4f s / 1000 patterns).",
-                 n_patterns, dur, 1000 * dur / n_patterns)
-    return processed
+    def process(self):
+        start = time.time()
+        processed = self._process_serial()
+        dur = time.time() - start
+        n_patterns = np.prod(self.ebsd_data.shape[:2])
+        logging.info(
+            "Processed %d patterns in %.2f s (%.4f s / 1000 patterns).",
+            n_patterns,
+            dur,
+            1000 * dur / n_patterns,
+        )
+        return processed
 
-# ──────────────────────────────────────────────────────────────────────────────
-# JSON helper
-# ──────────────────────────────────────────────────────────────────────────────
-def convert_results(obj):
-    if isinstance(obj, dict):
-        return {k: convert_results(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [convert_results(i) for i in obj]
-    if isinstance(obj, (np.integer, np.floating)):
-        return obj.item()
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    return obj
-
-
-def save_results_to_json(results, path="bandOutputData.json"):
-    with open(path, "w") as f:
-        json.dump(convert_results(results), f, indent=4)
-    logging.info("Results saved to %s", path)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# **CSV** writer (replaces Excel)
-# ──────────────────────────────────────────────────────────────────────────────
-def save_results_to_csv(results,
-                        raw_path="bandOutputData.csv",
-                        filtered_path="filtered_band_data.csv"):
-    rows = []
-    for res in results:
-        xy  = res.get("x,y")
-        ind = res.get("ind")
-        for band in res["bands"]:
-            bw   = band.get("bandWidth")
-            cpp  = band.get("centralPeak")
-            valid = band.get("band_valid", False)
-            peak = band.get("band_peak", 0)
-            bkg  = band.get("band_bkg", 0)
-            psnr = band.get("psnr", 0)
-            eff  = band.get("efficientlineIntensity", 0)
-            deff = band.get("defficientlineIntensity", 0)
-            ratio = (eff / deff
-                     if deff and eff and np.isfinite(eff) and np.isfinite(deff)
-                     else 0)
-            rows.append({
-                "X,Y": xy,
-                "Ind": ind,
-                "hkl": band.get("hkl"),
-                "hkl_group": band.get("hkl_group", "unknown"),
-                "Central Line": band.get("central_line"),
-                "Line Distance": band.get("line_dist"),
-                "Band Width": bw,
-                "band_peak": peak,
-                "band_bkg": bkg,
-                "psnr": psnr,
-                "efficientlineIntensity": eff,
-                "defficientlineIntensity": deff,
-                "efficientDefficientRatio": np.round(ratio, 2),
-                "band_valid": valid
-            })
-
-    df = pd.DataFrame(rows).round(3)
-    df.to_csv(raw_path, index=False)
-    logging.info("Raw results saved to %s", raw_path)
-
-    filt = df[df["band_valid"]]
-    best = filt.loc[filt.groupby("Ind")["psnr"].idxmax()]
-    best.to_csv(filtered_path, index=False)
-    logging.info("Filtered results saved to %s", filtered_path)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Pattern-loading utilities (unchanged except for comments)
-# ──────────────────────────────────────────────────────────────────────────────
 def _square_pattern(arr: np.ndarray, tol: float = 0.95) -> np.ndarray:
     h, w = arr.shape
     if h == w:
@@ -328,13 +251,16 @@ if __name__ == "__main__":
                                     n_patterns,
                                     tile_from_single=True)
 
-    results = process_kikuchi_images(
+    processor = KikuchiBatchProcessor(
         ebsd_data,
         json_input,
+        config=config,
         desired_hkl=config.get("desired_hkl", "002"),
-        config=config
     )
+    results = processor.process()
 
-    save_results_to_csv(results,
-                        raw_path="bandOutputData.csv",
-                        filtered_path="filtered_band_data.csv")
+    ut.save_results_to_csv(
+        results,
+        raw_path="bandOutputData.csv",
+        filtered_path="filtered_band_data.csv",
+    )

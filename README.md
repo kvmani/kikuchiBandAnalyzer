@@ -93,7 +93,7 @@ Configures a detector using parameters in the .yml file.
 Simulates Kikuchi patterns using CustomKikuchiPatternSimulator, which generates markers and band labels based on the provided hkl_list.
 Band Width Detection:
 
-The `process_kikuchi_images` method performs band detection based on parameters specified in the `.yml` file, such as `gradient_threshold`, `perpendicular_line_length`, `smoothing_sigma`, and `rectWidth`.
+The `KikuchiBatchProcessor` class performs band detection using its `process()` method. Detection parameters are specified in the `.yml` file, such as `gradient_threshold`, `perpendicular_line_length`, `smoothing_sigma`, and `rectWidth`.
 All floating-point values in the DataFrame are rounded to three decimal places before saving to CSV.
 Filtering and Grouping Results:
 
