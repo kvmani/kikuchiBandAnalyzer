@@ -52,7 +52,7 @@ class BandWidthAutomator:
         by default.
     """
 
-    def __init__(self, config_path: str = "bandDetectorOptionsDebug.yml"):
+    def __init__(self, config_path: str = "bandDetectorOptionsHcp.yml"):
         """Instantiate the automator and load the configuration."""
 
         self.config = load_config(config_path)
@@ -221,8 +221,8 @@ class BandWidthAutomator:
             band_stress_array = band_strain_array * elastic_modulus
 
             ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
-            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
-            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
+            #ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
+            #ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
             ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
             ut.modify_ang_file(
                 self.in_ang_path,
