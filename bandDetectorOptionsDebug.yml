@@ -4,7 +4,7 @@ h5_file_path: "testData/DA.oh5"  # Path to the .h5 EBSD dataset file
 crop_start: 1     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 3 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
-desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "0,0,2"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
 #reorder_patterns_from_hdf: true # make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
@@ -36,4 +36,4 @@ min_psnr: 1.01               # Minimum peak signal-to-noise ratio for accepting 
 
 #plot_band_detection: true
 #plot_data_export_file_name: "4X4_Raw.csv"
-skip_display_EBSDmap: true # set it true if you want to skip EBSD plot display
+skip_display_EBSDmap: false # set it true if you want to skip EBSD plot display

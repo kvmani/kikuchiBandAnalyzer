@@ -126,11 +126,13 @@ class BandWidthAutomator:
             verbose=1,
         )
 
+        phase = phase_list[0]
         ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list).symmetrise()
         simulator = CustomKikuchiPatternSimulator(ref)
         sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
+        sim.phase = phase
 
-        desired_hkl = self.config.get("desired_hkl", "111")
+        desired_hkl = self.config.get("desired_hkl", "1,1,1")
         markers, grouped_dict_list = sim.as_markers(
             kikuchi_line_labels=True, desired_hkl=desired_hkl
         )
@@ -148,7 +150,7 @@ class BandWidthAutomator:
     # ------------------------------------------------------------------
     def detect_band_widths(self):
         """Run the :class:`KikuchiBatchProcessor` over all patterns."""
-        desired_hkl = self.config.get("desired_hkl", "111")
+        desired_hkl = self.config.get("desired_hkl", "1,1,1")
         ebsd_data = self.dataset.data
         processor = KikuchiBatchProcessor(
             ebsd_data,
@@ -165,7 +167,7 @@ class BandWidthAutomator:
         filtered_csv_path = self.output_dir / f"{self.base_name}_filtered_band_data.csv"
         ut.save_results_to_csv(processed, str(output_csv_path), str(filtered_csv_path))
 
-        desired_hkl = self.config.get("desired_hkl", "111")
+        desired_hkl = self.config.get("desired_hkl", "1,1,1")
 
         df = pd.read_csv(filtered_csv_path)
         required_cols = [

@@ -7,6 +7,123 @@ import h5py
 import shutil
 import random
 import matplotlib.pyplot as plt
+import re
+from packaging.version import parse as _v
+from diffpy.structure import Atom, Lattice, Structure
+from orix.crystal_map import Phase
+from orix.vector import Miller
+from typing import Union, Tuple
+
+
+def parse_indices(obj: Union[str, Tuple[int, ...], list]) -> Tuple[int, ...]:
+    """
+    Parse Miller indices from a string, list, or tuple into a tuple of integers.
+
+    Accepts inputs like:
+        - String formats: "1,2,3", "(1,2,3)", "1 -2 0", "1,-2, 0"
+        - Tuple/list formats: (1, 2, 3), [1, -2, 0]
+
+    Parameters
+    ----------
+    obj : str | tuple[int, ...] | list[int]
+        The input object representing a Miller or Miller–Bravais index.
+
+    Returns
+    -------
+    tuple[int, ...]
+        A tuple of parsed integers, e.g., (1, -2, 0).
+
+    Raises
+    ------
+    ValueError
+        If the input is not a string, list, or tuple, or cannot be parsed correctly.
+    """
+    if isinstance(obj, str):
+        nums = re.findall(r"-?\d+", obj)
+        return tuple(int(n) for n in nums)
+    elif isinstance(obj, (tuple, list)):
+        return tuple(int(n) for n in obj)
+    else:
+        raise ValueError(f"Bad input: {obj!r}")
+
+
+def make_phase(cfg: dict) -> Phase:
+    """
+    Construct an orix Phase object from a configuration dictionary.
+
+    Expected format:
+        cfg = {
+            "name": "Ni",
+            "space_group": 225,
+            "lattice": [a, b, c, alpha, beta, gamma]  # in Å and degrees
+        }
+
+    The function assumes a single atom at the origin (0, 0, 0).
+
+    Parameters
+    ----------
+    cfg : dict
+        Dictionary with keys: "name", "space_group", "lattice".
+
+    Returns
+    -------
+    Phase
+        An orix Phase object representing the crystal structure.
+
+    Raises
+    ------
+    KeyError
+        If any required key is missing from the config dictionary.
+    """
+    L = Lattice(*cfg["lattice"])
+    struct = Structure(lattice=L, atoms=[Atom(cfg["name"], [0, 0, 0])])
+    return Phase(name=cfg["name"], space_group=cfg["space_group"], structure=struct)
+
+
+def belongs_to_group(
+    hkl: Union[str, Tuple[int, ...], list],
+    desired: Union[str, Tuple[int, ...], list],
+    phase: Phase,
+    tolerance_deg: float = 0.5
+) -> Tuple[bool, float]:
+    """
+    Check if a given Miller or Miller–Bravais index belongs to the same
+    symmetric group as a desired index using symmetry-aware angle comparison.
+
+    The method uses the `orix` + `diffsims` symmetry operations to determine
+    equivalence based on angular proximity.
+
+    Parameters
+    ----------
+    hkl : str | tuple[int, ...] | list[int]
+        Index to test. Can be 3-index (hkl) or 4-index (hkil).
+    desired : str | tuple[int, ...] | list[int]
+        Target index representing the desired symmetric group.
+    phase : Phase
+        `orix.crystal_map.Phase` object defining the crystal symmetry.
+    tolerance_deg : float, optional
+        Angular tolerance (in degrees) for equivalence, default is 0.5°.
+
+    Returns
+    -------
+    tuple[bool, float]
+        (True, angle) if within tolerance, else (False, angle).
+        `angle` is the minimum angle (in degrees) between the input and desired plane
+        under symmetry operations.
+
+    Raises
+    ------
+    ValueError
+        If either hkl or desired cannot be parsed into valid indices.
+    """
+    h = parse_indices(hkl)
+    d = parse_indices(desired)
+    m1 = Miller(hkl=[h] if len(h) == 3 else None, hkil=[h] if len(h) == 4 else None, phase=phase)
+    m2 = Miller(hkl=[d] if len(d) == 3 else None, hkil=[d] if len(d) == 4 else None, phase=phase)
+    ang = m1.angle_with(m2, use_symmetry=True, degrees=True)[0]
+    return abs(ang) < tolerance_deg, ang
+
+
 
 def create_temp_file(original_path):
     """

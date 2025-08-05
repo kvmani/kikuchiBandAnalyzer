@@ -5,7 +5,7 @@ h5_file_path: "/mnt/volume/heamatite_data/Hematite_1.oh5"  # Path to the .h5 EBS
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 5 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
-desired_hkl: "112"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "1,1,2"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
 reorder_patterns_from_hdf: false

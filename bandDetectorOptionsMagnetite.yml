@@ -8,8 +8,8 @@ h5_file_path: "C:\\Users\\kvman\\Documents\\ml_data\\debarnaData\\strain_transpo
 crop_start: 0     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 15 # Ending index for cropping, used only in debug mode for faster processing
 debug: true      # Set to true for enabling debug mode; this crops the dataset for faster runs
-#desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
-desired_hkl: "022"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+#desired_hkl: "0,0,2"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "0,2,2"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
 skip_ang_processing: true

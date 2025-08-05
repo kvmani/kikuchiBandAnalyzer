@@ -1,10 +1,10 @@
 # Configuration options for Kikuchi pattern and EBSD data processing
 
-h5_file_path: "testData/Test_Ti.oh5"  # Path to the .h5 EBSD dataset file
+h5_file_path: "testData/hcp_Pink100.oh5"  # Path to the .h5 EBSD dataset file
 crop_start: 1     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 8 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs
-desired_hkl: "002"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
+desired_hkl: "1,1,0"  # Targeted hkl group for Kikuchi line detection; '111' is a common default
 desired_hkl_ref_width: 12
 elastic_modulus: 205e9 # 205 GPa
 #reorder_patterns_from_hdf: true # make this true in case of AI processed EBSPs which are wrongly numbered by TSL software
@@ -17,7 +17,7 @@ phase_list:
     - element: "Ti"           # Element symbol
       position: [0.3333, 0.66667, 0.25]     # Atom Positions in the unit cell
 
-# List of HKL indices for Kikuchi line detection
+# List of HKL indices for Kikuchi line detection Even for hcp you need to put in 3 index notation only!!
 hkl_list:
   - [0,0,2] ## put all the fundamental reflectors of the phase here. if your system is FCC no need to modify this list.
   - [1,0,0]

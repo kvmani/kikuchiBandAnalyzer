@@ -8,6 +8,7 @@ import kikuchipy as kp
 import numpy as np
 import pandas as pd
 from packaging.version import parse as _v
+import utilities as ut
 
 _HS_VERSION = _v(hs.__version__)
 
@@ -69,17 +70,29 @@ class CustomGeometricalKikuchiPatternSimulation(kp.simulations.GeometricalKikuch
         hkl_values = sorted(map(abs, map(int, hkl_str.split())))
         return "".join(map(str, hkl_values))
 
-    def _kikuchi_line_labels_as_markers(self, desired_hkl="111", **kwargs) -> list:
+    def _kikuchi_line_labels_as_markers(self, desired_hkl="1,1,1", **kwargs) -> list:
         coords = self.lines_coordinates(index=(), exclude_nan=False)
         coords = np.around(coords, 3)
         reflectors = self._reflectors.coordinates.round().astype(int)
         array_str = np.array2string(reflectors, threshold=reflectors.size)
         texts = re.sub("[][ ]", " ", array_str).split("\n")
 
-        filtered_texts = np.array(
-            [t if self.get_hkl_group(t) == desired_hkl else "" for t in texts]
+        # filtered_texts = np.array(
+        #     [t if self.get_hkl_group(t) == desired_hkl else "" for t in texts]
+        # )
+        if not hasattr(self, "phase"):
+            raise AttributeError("Phase not set on simulation; did you forget sim.phase = phase?")
+
+        self.phase = getattr(self, "phase", None) or ut.make_phase(
+            {"name": "Ni", "space_group": 225, "lattice": [1, 1, 1, 90, 90, 90]}
         )
-        refelctor_group = ["".join(map(str, sorted(map(abs, row)))) for row in reflectors]
+
+        filtered_texts = np.array([
+            t if ut.belongs_to_group(t, desired_hkl, phase=self.phase)[0] else ""
+            for t in texts
+        ])
+        #refelctor_group = ["".join(map(str, sorted(map(abs, row)))) for row in reflectors]
+        reflector_group = [str(tuple(int(r) for r in row)) for row in reflectors]
 
         kw = {
             "color": "b",
@@ -115,9 +128,9 @@ class CustomGeometricalKikuchiPatternSimulation(kp.simulations.GeometricalKikuch
                 y[~is_finite[..., i]] = np.nan
                 x = x.squeeze()
                 y = y.squeeze()
-
-                text_marker = make_text_marker(x, y, filtered_texts[i], **kw)
-                kikuchi_line_label_list.append(text_marker)
+                if _HS_VERSION < _v("2.0"):
+                    text_marker = make_text_marker(x, y, filtered_texts[i], **kw)
+                    kikuchi_line_label_list.append(text_marker)
 
                 valid_mask = is_finite[..., i]
                 if np.any(valid_mask):
@@ -125,7 +138,7 @@ class CustomGeometricalKikuchiPatternSimulation(kp.simulations.GeometricalKikuch
                     num_valid = row_indices.size
                     kikuchi_data = {
                         "hkl": texts[i].strip(),
-                        "hkl_group": refelctor_group[i],
+                        "hkl_group": reflector_group[i],
                         "central_line": np.vstack([x1[valid_mask], y1[valid_mask], x2[valid_mask], y2[valid_mask]]).T.tolist(),
                         "line_mid_xy": np.vstack([x[valid_mask], y[valid_mask]]).T.tolist(),
                         "line_dist": line_dist[valid_mask].T.tolist(),
@@ -168,7 +181,7 @@ class CustomGeometricalKikuchiPatternSimulation(kp.simulations.GeometricalKikuch
         zone_axes_kwargs: Optional[dict] = None,
         zone_axes_labels_kwargs: Optional[dict] = None,
         kikuchi_line_labels_kwargs: Optional[dict] = None,
-        desired_hkl: str = "111",
+        desired_hkl: str = "1,1,1",
         pc_kwargs: Optional[dict] = None,
     ) -> list:
         markers = super().as_markers(

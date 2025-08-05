@@ -25,6 +25,11 @@ from PIL import Image
 import dask.array as da
 import matplotlib.pyplot as plt
 import utilities as ut
+from packaging.version import parse as _v
+from diffpy.structure import Atom, Lattice, Structure
+from orix.crystal_map import Phase
+from orix.vector import Miller
+from typing import Union, Tuple
 
 from strategies import RectangularAreaBandDetector
 
@@ -44,7 +49,7 @@ logging.basicConfig(
 class BandDetector:
     """Detect band widths for a single Kikuchi pattern."""
     def __init__(self, image=None, image_path=None, points=None,
-                 desired_hkl="111", config=None):
+                 desired_hkl="1,1,1", config=None, phase = None):
         """Initialise the detector with either an image array or path."""
         if image is not None:
             if isinstance(image, da.Array):
@@ -59,6 +64,10 @@ class BandDetector:
         self.points = points
         self.desired_hkl = desired_hkl
         self.config = config if config else self._load_config()
+        if phase is None:
+            self.phase = ut.make_phase(self.config)
+        else:
+            self.phase = phase
 
     # ─────────────────────────────────── helpers
     def _ensure_grayscale(self, image):
@@ -92,8 +101,9 @@ class BandDetector:
             mid_xy     = np.around(point["line_mid_xy"], 3).tolist()
             dist       = point["line_dist"]
             hkl_group  = point.get("hkl_group", "unknown")
+            belongToDesiredGroup, ang_deg=ut.belongs_to_group(self.config["desired_hkl"], hkl, phase=self.phase)
 
-            if sorted(hkl_group) == sorted(self.desired_hkl):
+            if belongToDesiredGroup:
                 result = self._detect_band(cline, hkl)
                 if result["band_valid"]:
                     result.update({
@@ -105,6 +115,9 @@ class BandDetector:
                     results.append(result)
                 if len(results) > 3:
                     break
+            else:
+                if self.config.get('debug', False):
+                    logging.warning(f"current point hkl : {hkl} is skipped as it is not sym_equl to desired group {hkl_group}")
         return results
 
     # ─────────────────────────────────── internals
@@ -119,12 +132,14 @@ class BandDetector:
 
 class KikuchiBatchProcessor:
     """Process a grid of Kikuchi patterns and detect bands."""
-    def __init__(self, ebsd_data, json_input, config=None, desired_hkl="111"):
+    def __init__(self, ebsd_data, json_input, config=None, desired_hkl="1,1,1", phase=None):
         """Store data and configuration for batch processing."""
         self.ebsd_data = ebsd_data
         self.json_input = json_input
         self.config = config if config is not None else load_config("bandWidthOptions.yml")
         self.desired_hkl = desired_hkl
+        phase = ut.make_phase(config["phase_list"])
+        self.phase = phase
 
     def process_kikuchi_image_at_pixel(self, row, col, json_entry):
         """Process a single image from the EBSD grid."""
@@ -134,7 +149,7 @@ class KikuchiBatchProcessor:
             image=image,
             points=points,
             desired_hkl=self.desired_hkl,
-            config=self.config,
+            config=self.config, phase = self.phase,
         )
         try:
             results = bdet.detect_bands()
@@ -255,10 +270,10 @@ def prepare_json_input(path: str, n_patterns: int, tile_from_single: bool):
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    config = load_config("bandDetectorOptions.yml")
-
-    SOURCE = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\ML_4x4Patterns\ML_4x4Patterns\Med_Mn_10k_4x4_00995.png"
-    jsonFile = r"C:\Users\kvman\Documents\ml_data\kikuchi_super_resolution\inference_testing_MLOutput\SingleMed_Mn_10k_4x4_00995.json"
+    config = load_config("bandDetectorOptionsHcp.yml")
+    SOURCE = r"testData/Med_Mn_10k_4x4_00995.png"
+    jsonFile = r"testData/Med_Mn_10k_4x4_00995.json"
+    phase = ut.make_phase(config["phase_list"])
 
     ebsd_data  = load_ebsd_data(SOURCE, tile_rows=1, tile_cols=1)
     n_patterns = np.prod(ebsd_data.shape[:2])
@@ -271,7 +286,7 @@ if __name__ == "__main__":
         ebsd_data,
         json_input,
         config=config,
-        desired_hkl=config.get("desired_hkl", "002"),
+        desired_hkl=config.get("desired_hkl", "110"), phase=phase
     )
     results = processor.process()
 
