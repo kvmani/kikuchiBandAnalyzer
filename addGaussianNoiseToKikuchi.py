@@ -213,26 +213,65 @@ class GaussianNoiseAdder:
         return out_path
 
     # ---- Debug viz ----
-    def show_debug(self, original: np.ndarray, noisy: np.ndarray, title: str = "") -> None:
+    def show_debug(self, original: np.ndarray, noisy: np.ndarray, masked: Optional[np.ndarray] = None, title: str = "") -> None:
         if not self.debug:
             return
         if plt is None:
             print("matplotlib not available; skipping debug visualization.")
             return
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-        ax0, ax1 = axes
-        ax0.imshow(original, cmap="gray")
-        ax0.set_title("Original")
-        ax0.axis("off")
-        ax1.imshow(noisy, cmap="gray")
-        ax1.set_title("Noisy (Gaussian)")
-        ax1.axis("off")
+        # Decide layout: 2 panels if no masked; otherwise 3 panels
+        if masked is None:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            views = [(original, "Original"), (noisy, "Noisy (Gaussian)")]
+        else:
+            fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+            views = [(original, "Original"), (noisy, "Noisy"), (masked, "Masked (circular)")]
+        for ax, (img, ttl) in zip(axes, views):
+            ax.imshow(img, cmap="gray")
+            ax.set_title(ttl)
+            ax.axis("off")
         if title:
             fig.suptitle(title)
         fig.tight_layout()
         plt.show()
 
     # ---- Orchestration for ONE image ----
+    @staticmethod
+    def apply_circular_mask(image_array):
+        """
+        Applies a circular mask to a square image array.
+
+        Parameters:
+        -----------
+        image_array : numpy.ndarray
+            The input image array to mask.
+
+        Returns:
+        --------
+        masked_array : numpy.ndarray
+            The masked image array.
+        mask : numpy.ndarray
+            The mask applied to the image array.
+        """
+        assert image_array.shape[0] == image_array.shape[1], "Image must be square (nXn shape)"
+        size = image_array.shape[0]
+        center = size // 2
+        radius = center
+
+        Y, X = np.ogrid[:size, :size]
+        dist_from_center = np.sqrt((X - center) ** 2 + (Y - center) ** 2)
+        mask = dist_from_center <= radius
+
+        if image_array.ndim == 2:  # Grayscale image
+            masked_array = np.zeros_like(image_array)
+            masked_array[mask] = image_array[mask]
+        elif image_array.ndim == 3:  # Color image
+            masked_array = np.zeros_like(image_array)
+            for i in range(image_array.shape[2]):  # Apply mask to each channel
+                masked_array[:, :, i] = np.where(mask, image_array[:, :, i], 0)
+
+        return masked_array
+
     def process_one(self, input_path: Path, *, mode: str, folder_out_dir: Optional[Path] = None,
                     visualize: bool = True) -> Path:
         """Process a single image path according to the specified mode.
@@ -245,6 +284,8 @@ class GaussianNoiseAdder:
         """
         arr, dtype, _mode = self.load_image(input_path)
         noisy = self.add_noise(arr)
+        # Apply circular mask AFTER noise injection
+        masked = self.apply_circular_mask(noisy)
 
         if mode in {"single", "list"}:
             out_path = self.derive_output_name_single(input_path)
@@ -257,12 +298,12 @@ class GaussianNoiseAdder:
             raise ValueError(f"Unknown mode: {mode}")
 
         out_path = self._resolve_collision(out_path)
-        saved_path = self.save_image(out_path, noisy, dtype)
+        saved_path = self.save_image(out_path, masked, dtype)
 
         if visualize:
-            self.show_debug(arr, noisy, title=f"{input_path.name}")
+            self.show_debug(arr, noisy, masked=masked, title=f"{input_path.name}")
 
-        print(f"Saved noisy image to: {saved_path}")
+        print(f"Saved masked noisy image to: {saved_path}")
         return saved_path
 
 
@@ -383,7 +424,7 @@ class BatchOrchestrator:
             if visualize:
                 first_shown = True
 
-        print(f"\nProcessed {len(results)} image(s) in mode='{mode}'.")
+        print(f"Processed {len(results)} image(s) in mode='{mode}'.")
         return results
 
 
@@ -398,11 +439,7 @@ if __name__ == "__main__":
         # 2) list[str|Path] of image files
         # 3) str/Path to a folder containing images
         "input_path": r"C:\Users\kvman\Documents\ml_data\TestingDataForPrepareCyclegANCode\simulated",  # <-- edit me
-        # "input_path": [
-        #     r"C:\Users\kvman\Documents\ml_data\TestingDataForPrepareCyclegANCode\simulated\Med_Mn_10k_4x4_00007.png",
-        #     r"C:\Users\kvman\Documents\ml_data\TestingDataForPrepareCyclegANCode\simulated\Med_Mn_10k_4x4_00016.png",
-        #                ],  # <-- edit me
-
+       # "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
