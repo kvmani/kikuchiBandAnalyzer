@@ -124,6 +124,9 @@ class GaussianNoiseAdder:
         self.preserve_format: bool = bool(config.get("preserve_format", False))
         self.debug: bool = bool(config.get("debug", False))
         self.debug_batch_first_only: bool = bool(config.get("debug_batch_first_only", True))
+        blur_cfg = config.get("blur", {})
+        self.blur_enabled: bool = bool(blur_cfg.get("enabled", False))
+        self.blur_sigma: float = float(blur_cfg.get("sigma", 1.0))
 
         # RNG handling: share a single RNG (seeded in orchestrator) across batch for determinism
         self._rng = rng if rng is not None else np.random.default_rng(config.get("seed", None))
@@ -146,6 +149,47 @@ class GaussianNoiseAdder:
                 return arr, arr.dtype, "L"
 
     # ---- Processing ----
+    # ---- Optional pre-processing: Gaussian blur on original ----
+    def apply_gaussian_blur(self, image: np.ndarray, sigma: float) -> np.ndarray:
+        """
+        Apply a Gaussian blur to a 2D (grayscale) or 3D array using separable
+        convolution with reflect padding. Preserves dtype and value range.
+        """
+        if sigma <= 0:
+            return image
+
+        # Work in float64 for precision
+        dtype = image.dtype
+        lo, hi = _dynamic_range_for_dtype(dtype)
+        img = image.astype(np.float64, copy=False)
+
+        # Build 1D Gaussian kernel
+        radius = max(1, int(math.ceil(3.0 * sigma)))
+        x = np.arange(-radius, radius + 1, dtype=np.float64)
+        k = np.exp(-(x * x) / (2.0 * sigma * sigma))
+        k /= k.sum()
+
+        def _convolve1d(a: np.ndarray, kernel: np.ndarray, axis: int) -> np.ndarray:
+            pad = len(kernel) // 2
+            a_pad = np.pad(a, [(pad, pad) if ax == axis else (0, 0) for ax in range(a.ndim)], mode="reflect")
+            # Roll axis to end for easier slicing
+            a_roll = np.moveaxis(a_pad, axis, -1)
+            out = np.empty_like(np.moveaxis(a, axis, -1), dtype=np.float64)
+            # Convolution by sliding window dot-product
+            for i in range(out.shape[-1]):
+                sl = a_roll[..., i:i + len(kernel)]
+                out[..., i] = np.tensordot(sl, kernel, axes=([-1], [0]))
+            # Move axis back
+            return np.moveaxis(out, -1, axis)
+
+        # Separable convolution: horizontal then vertical
+        blurred = _convolve1d(img, k, axis=1)  # X
+        blurred = _convolve1d(blurred, k, axis=0)  # Y
+
+        # Clip and cast back
+        blurred = np.clip(blurred, lo, hi).astype(dtype)
+        return blurred
+
     def add_noise(self, arr: np.ndarray) -> np.ndarray:
         """Add Gaussian noise using variance and amplitude, preserving dtype & range."""
         dtype = arr.dtype
@@ -283,7 +327,10 @@ class GaussianNoiseAdder:
             visualize: whether to show matplotlib debug for this image (if debug=True)
         """
         arr, dtype, _mode = self.load_image(input_path)
-        noisy = self.add_noise(arr)
+        base = self.apply_gaussian_blur(arr, self.blur_sigma) if self.blur_enabled else arr
+        noisy = self.add_noise(base)
+        #noisy = self.add_noise(arr)
+
         # Apply circular mask AFTER noise injection
         masked = self.apply_circular_mask(noisy)
 
@@ -439,12 +486,24 @@ if __name__ == "__main__":
         # 2) list[str|Path] of image files
         # 3) str/Path to a folder containing images
         "input_path": r"C:\Users\kvman\Documents\ml_data\TestingDataForPrepareCyclegANCode\simulated",  # <-- edit me
+        "input_path": [
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\1pct_8.47996\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\2pct_8.56392\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\3pct_8.64788\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\4pct_8.73184\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\5pct_8.8158\0 0 0\460x460.bmp",
+            ], # <-- edit me
        # "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
-            "amplitude": 1.0,       # scalar multiplier applied to the Gaussian sample
+            "amplitude": 2.0,       # scalar multiplier applied to the Gaussian sample
             "mean": 0.0,             # mean of Gaussian (typically 0)
+        },
+        "blur": {
+            "enabled": True,  # set to False to skip blurring
+            "sigma": 3  # standard deviation in pixels
         },
         "seed": 42,                   # optional: int for reproducible noise; or set to None/omit
         "overwrite": True,            # if False, will append _v2, _v3, ... when file exists
