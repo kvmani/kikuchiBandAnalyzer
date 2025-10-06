@@ -323,8 +323,8 @@ if __name__ == "__main__":
     SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
     # # SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
     SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # #SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    #SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
 
     phase = ut.make_phase(config["phase_list"])
 

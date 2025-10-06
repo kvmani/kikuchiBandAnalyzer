@@ -498,11 +498,11 @@ if __name__ == "__main__":
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
-            "amplitude": 2.0,       # scalar multiplier applied to the Gaussian sample
+            "amplitude": 0.0,       # scalar multiplier applied to the Gaussian sample
             "mean": 0.0,             # mean of Gaussian (typically 0)
         },
         "blur": {
-            "enabled": True,  # set to False to skip blurring
+            "enabled": False,  # set to False to skip blurring
             "sigma": 3  # standard deviation in pixels
         },
         "seed": 42,                   # optional: int for reproducible noise; or set to None/omit
