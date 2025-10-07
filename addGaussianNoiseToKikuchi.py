@@ -131,7 +131,56 @@ class GaussianNoiseAdder:
         # RNG handling: share a single RNG (seeded in orchestrator) across batch for determinism
         self._rng = rng if rng is not None else np.random.default_rng(config.get("seed", None))
 
+    def derive_output_name_to_folder(
+        self,
+        input_path: Path,
+        out_dir: Path,
+        relative_root: Optional[Path],
+        dtype: np.dtype
+    ) -> Path:
+        """
+        Build a filename for use under a single output folder:
+        - Use the path tail relative to `relative_root` if possible.
+        - Replace path separators with underscores; keep spaces.
+        - Append '_noisy' before the extension.
+        - Apply bit-depth extension adjustment via _maybe_adjust_extension.
+        """
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Try to compute a relative tail; fall back to basename if not possible
+        try:
+            if relative_root is not None:
+                rel = input_path.relative_to(relative_root)
+            else:
+                rel = Path(input_path.name)
+        except Exception:
+            rel = Path(input_path.name)
+
+        # Convert tail parts to a single stem joined by underscores
+        parts = list(rel.parts)
+        if len(parts) == 0:
+            parts = [input_path.name]
+        stem_no_ext = Path(parts[-1]).stem
+        if len(parts) > 1:
+            # prepend directory parts (without separators) before the file stem
+            dir_join = "_".join(parts[:-1])  # preserves spaces inside names
+            safe_stem = f"{dir_join}_{stem_no_ext}"
+        else:
+            safe_stem = stem_no_ext
+
+        # Append `_noisy` and keep original extension initially
+        ext = input_path.suffix
+        candidate = out_dir / f"{safe_stem}_noisy{ext}"
+
+        # Adjust extension if needed for 16-bit preservation policy
+        candidate = self._maybe_adjust_extension(candidate, dtype)
+
+        # Avoid collisions unless overwrite=True
+        candidate = self._resolve_collision(candidate)
+        return candidate
+
     # ---- I/O ----
+
     def load_image(self, path: Path) -> Tuple[np.ndarray, np.dtype, str]:
         """Load the input image as grayscale array.
         Returns: (array, original_dtype, original_mode)
@@ -438,8 +487,9 @@ class BatchOrchestrator:
             raise ValueError("CONFIG['input_path'] must be provided.")
         image_exts = config.get("folder_image_exts", [".bmp", ".png", ".jpg", ".jpeg"])
         self.resolver = InputResolver(raw_input, image_exts)
-
     def run(self) -> List[Path]:
+        import os
+
         mode = self.resolver.mode
         paths = self.resolver.paths
 
@@ -451,6 +501,28 @@ class BatchOrchestrator:
         if mode == "folder":
             folder_out_dir = self.resolver.folder / "noisy"
 
+        # --- New: single sink folder option ---
+        output_folder_cfg = self.config.get("outputFolder", None)
+        output_base_dir: Optional[Path] = None
+        if output_folder_cfg:
+            output_base_dir = Path(output_folder_cfg).expanduser()
+            print(f"[WARN] `outputFolder` is set; all outputs will be written to: {output_base_dir}")
+            print("       This overrides per-file destinations (single/list/folder modes).")
+
+        # Determine a relative-root for name derivation when outputFolder is set
+        relative_root: Optional[Path] = None
+        if output_base_dir is not None:
+            try:
+                if mode == "folder":
+                    relative_root = self.resolver.folder
+                else:
+                    # common ancestor across all input files (list or single)
+                    strs = [str(p) for p in paths]
+                    common = os.path.commonpath(strs) if len(strs) > 1 else str(paths[0].parent)
+                    relative_root = Path(common)
+            except Exception:
+                relative_root = None  # fall back to basenames only
+
         for idx, p in enumerate(paths):
             visualize = False
             if self.adder.debug:
@@ -461,18 +533,40 @@ class BatchOrchestrator:
                 else:
                     visualize = True
 
-            saved = self.adder.process_one(
-                p,
-                mode=mode,
-                folder_out_dir=folder_out_dir,
-                visualize=visualize,
-            )
-            results.append(saved)
+            if output_base_dir is not None:
+                # Route everything to the single sink, with unique filename scheme
+                arr, dtype, _ = self.adder.load_image(p)
+                base = self.adder.apply_gaussian_blur(arr, self.adder.blur_sigma) if self.adder.blur_enabled else arr
+                noisy = self.adder.add_noise(base)
+                masked = self.adder.apply_circular_mask(noisy)
+
+                out_path = self.adder.derive_output_name_to_folder(
+                    input_path=p,
+                    out_dir=output_base_dir,
+                    relative_root=relative_root,
+                    dtype=dtype
+                )
+                saved_path = self.adder.save_image(out_path, masked, dtype)
+
+                if visualize:
+                    self.adder.show_debug(arr, noisy, masked=masked, title=f"{p.name}")
+            else:
+                # Original behavior preserved (single/list/folder modes)
+                saved_path = self.adder.process_one(
+                    p,
+                    mode=mode,
+                    folder_out_dir=folder_out_dir,
+                    visualize=visualize,
+                )
+
+            results.append(saved_path)
             if visualize:
                 first_shown = True
 
         print(f"Processed {len(results)} image(s) in mode='{mode}'.")
         return results
+
+
 
 
 # -------------
@@ -495,14 +589,17 @@ if __name__ == "__main__":
             r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\5pct_8.8158\0 0 0\460x460.bmp",
             ], # <-- edit me
        # "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
+
+        "outputFolder": r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\noisyImages",  # OPTIONAL; remove or None to keep old behavior
+
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
-            "amplitude": 0.0,       # scalar multiplier applied to the Gaussian sample
+            "amplitude": 1.0,       # scalar multiplier applied to the Gaussian sample
             "mean": 0.0,             # mean of Gaussian (typically 0)
         },
         "blur": {
-            "enabled": False,  # set to False to skip blurring
+            "enabled": True,  # set to False to skip blurring
             "sigma": 3  # standard deviation in pixels
         },
         "seed": 42,                   # optional: int for reproducible noise; or set to None/omit
