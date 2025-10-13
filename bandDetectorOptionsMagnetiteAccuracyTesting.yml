@@ -37,9 +37,11 @@ hkl_list:
 smoothing_sigma: 2          # Sigma for Gaussian smoothing, affects edge sharpness; usually between 1-3
 strategy: "rectangular_area"  # Detection strategy to be used; can be "rectangular_area" or others as per implementation
 #rectWidth: 320               # Width of the rectangle for detection; for 1840X1840
-rectWidth: 80               # Width of the rectangle for detection; for 230X230
+rectWidth: 40               # Width of the rectangle for detection; for 230X230
 #fractionOfRectWidthFromImage: 0.2 # fraction of image to be considered for band detection
-min_psnr: 1.2               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
-
+min_psnr: 1.1               # Minimum peak signal-to-noise ratio for accepting bands; higher values yield fewer detections
+#plot_data_export_file_name: "404_ground_truth_profile.csv"
+#plot_data_export_file_name: "404_noisy_profile.csv"
+plot_data_export_file_name: "404_ml_processed_profile.csv"
 plot_band_detection: true # true or false
 #plot_band_detection_condition: "self.band_width > 20 or self.band_width < 14"

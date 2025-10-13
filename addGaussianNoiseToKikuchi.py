@@ -579,28 +579,25 @@ if __name__ == "__main__":
         # 1) str/Path to a single image
         # 2) list[str|Path] of image files
         # 3) str/Path to a folder containing images
-        "input_path": r"C:\Users\kvman\Documents\ml_data\TestingDataForPrepareCyclegANCode\simulated",  # <-- edit me
+        "input_path": r"testData/groundTruth",  # <-- edit me
         "input_path": [
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 0 0\460x460.bmp",
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\1pct_8.47996\0 0 0\460x460.bmp",
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\2pct_8.56392\0 0 0\460x460.bmp",
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\3pct_8.64788\0 0 0\460x460.bmp",
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\4pct_8.73184\0 0 0\460x460.bmp",
-            r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\5pct_8.8158\0 0 0\460x460.bmp",
+            r"C:\Users\kvman\PycharmProjects\kikuchiBandAnalyzer\testData\groundTruth\0_0_0_0pctStrain_460x460.bmp",
+            r"C:\Users\kvman\PycharmProjects\kikuchiBandAnalyzer\testData\groundTruth\0_45_0_0pctStrain_460x460.bmp"
+            #r"testData/groundTruth/0_45_0_0pctStrain_460x460.bmp",
             ], # <-- edit me
        # "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
 
-        "outputFolder": r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite\noisyImages",  # OPTIONAL; remove or None to keep old behavior
+        "outputFolder": r"testData/noisyImages_2",  # OPTIONAL; remove or None to keep old behavior
 
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
-            "amplitude": 1.0,       # scalar multiplier applied to the Gaussian sample
+            "amplitude": 5.0,       # scalar multiplier applied to the Gaussian sample
             "mean": 0.0,             # mean of Gaussian (typically 0)
         },
         "blur": {
             "enabled": True,  # set to False to skip blurring
-            "sigma": 3  # standard deviation in pixels
+            "sigma": 1  # standard deviation in pixels
         },
         "seed": 42,                   # optional: int for reproducible noise; or set to None/omit
         "overwrite": True,            # if False, will append _v2, _v3, ... when file exists

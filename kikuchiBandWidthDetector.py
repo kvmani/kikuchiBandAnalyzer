@@ -117,7 +117,7 @@ class BandDetector:
                     break
             else:
                 if self.config.get('debug', False):
-                    logging.warning(f"current point hkl : {hkl} is skipped as it is not sym_equl to desired group {hkl_group}")
+                    logging.warning(f"current point hkl : {hkl} is skipped as it is not sym_equl to desired group {self.config['desired_hkl']}")
         return results
 
     # ─────────────────────────────────── internals
@@ -271,8 +271,8 @@ def prepare_json_input(path: str, n_patterns: int, tile_from_single: bool):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
 
-    SOURCE_ROOT = r"C:\Users\kvman\Downloads\accuracy_testing_ML-EBSD-Patterns-Magnetite\accuracy_testing_ML-EBSD-Patterns-Magnetite/"
-    json_root = r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite/"
+    SOURCE_ROOT = r"testData/"
+    json_root = r"testData/"
 
     config = load_config("bandDetectorOptionsHcp.yml")
     config = load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
@@ -284,47 +284,13 @@ if __name__ == "__main__":
     SOURCE = (r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\4pct_8.73184\0 0 0\230x230.bmp")
     jsonFile = r"testData/Med_Mn_10k_4x4_00995.json"
     jsonFile = r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_0_0_0_230_230.json"
-    ### below line is to adjust all of the three inputs for  a single case in one go
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\1840x1840.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\1840x1840_noisy.bmp", json_root+r"0pct_0_0_0_1840_1840.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    
-    ##### now 230X230 cases
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\230x230.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\230x230_noisy.bmp", json_root+r"0pct_0_0_0_230_230.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
 
     ##### now 460X460 cases
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # #SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"1pct_8.47996\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # # SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"2pct_8.56392\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # # SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"3pct_8.64788\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # # SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"4pct_8.73184\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    #SOURCE, jsonFile, config = SOURCE_ROOT+r"5pct_8.8158\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    SOURCE, jsonFile, config = SOURCE_ROOT+r"groundTruth\0_0_0_0pctStrain_460x460.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    SOURCE, jsonFile, config = SOURCE_ROOT+r"noisyImages_2\0_0_0_0pctStrain_460x460_noisy.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    SOURCE, jsonFile, config = SOURCE_ROOT+r"Images_ai_processed\cyclegan_kikuchi_model_weights\de_blur_noise_accuracy\test_latest\images\0_0_0_0pctStrain_460x460__level_1_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    # SOURCE, jsonFile, config = SOURCE_ROOT+r"ai_processed\0_0_0_0_pct.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
 
     phase = ut.make_phase(config["phase_list"])
 

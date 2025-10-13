@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
 """
-plot_profiles.py – Plot several two-column (x,y) CSV files on one graph and export the scaled data to Excel.
+plot_profiles_config.py – Plot several two-column (x,y) CSV files on one graph,
+driven entirely by a CONFIG dict, and export the scaled data to Excel.
 
-Example:
-python plot_profiles.py 4X4_Raw.csv 1X1_GroundTruth.csv 1X1_ML_Processed.csv \
-       --x-scales "1.7,1.0,1.0" --font-size 12 \
-       --colors "C0,C1,C2" --styles "solid,dashed,dotted" \
-       --widths "1.5,1.5,2" --output profiles.png
+Behavior mirrors the CLI-based version:
+- Per-series x-scaling
+- Cycling colors/styles/widths
+- Auto-detect single header row
+- Save figure to 'output' if provided, else show()
+- Export Excel with paired columns [Scaled X (label), Y (label)]
+
+Usage:
+1) Edit the CONFIG dict at the bottom of this file and run:
+   python plot_profiles_config.py
+
+2) Or import plot_profiles_from_config(CONFIG) from another module.
 """
 
-import argparse
-import itertools
+from __future__ import annotations
 import os
+import itertools
+from typing import List, Tuple, Optional
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-import pandas as pd
 
 
 def _has_header(path: str) -> bool:
-    """Return ``True`` if the first non-empty line contains text.
-
-    Parameters
-    ----------
-    path : str
-        Path to the CSV file.
-    """
+    """Return True if the first non-empty line appears to be a header (non-digit start)."""
     with open(path, "r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
@@ -34,140 +38,154 @@ def _has_header(path: str) -> bool:
     return False
 
 
-def load_profile(path: str):
-    """Load a two-column profile from ``path``.
-
-    Parameters
-    ----------
-    path : str
-        CSV file containing ``x,y`` data.
-
-    Returns
-    -------
-    Tuple[np.ndarray, np.ndarray]
-        Arrays of ``x`` and ``y`` values.
-    """
+def load_profile(path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Load a two-column profile (x, y) from CSV."""
     skip = 1 if _has_header(path) else 0
     x, y = np.loadtxt(path, delimiter=",", skiprows=skip, unpack=True)
     return x, y
 
 
-def infinite_cycle(seq):
-    """Yield elements of ``seq`` in an endless cycle."""
+def _cycle(seq):
+    """Yield elements of seq in an endless cycle."""
     return itertools.cycle(seq)
 
 
-def plot_profiles(
-    files,
-    x_scales=None,
-    font_size=12,
-    colors=None,
-    styles=None,
-    widths=None,
-    out_path=None,
-):
-    plt.rcParams.update({"font.size": font_size})
+def _validate_and_prepare_config(cfg: dict) -> dict:
+    """Validate inputs and fill defaults without altering original behavior."""
+    if "files" not in cfg or not cfg["files"]:
+        raise ValueError("CONFIG['files'] must be a non-empty list of CSV paths.")
+
+    files: List[str] = cfg["files"]
+
+    # x_scales: if provided, must match number of files; else default 1.0 per file
+    x_scales: Optional[List[float]] = cfg.get("x_scales")
+    if x_scales is not None:
+        if len(x_scales) != len(files):
+            raise ValueError("Length of CONFIG['x_scales'] must match CONFIG['files'].")
+    else:
+        x_scales = [1.0] * len(files)
+
+    font_size: int = int(cfg.get("font_size", 12))
 
     default_colors = ["C0", "C1", "C2", "C3", "C4"]
     default_styles = ["solid", "dashed", "dotted", "dashdot", (0, (1, 1))]
     default_widths = [1.5] * len(default_colors)
 
-    colors = colors or default_colors
-    styles = styles or default_styles
-    widths = widths or default_widths
-    x_scales = x_scales or [1.0] * len(files)
+    colors = cfg.get("colors") or default_colors
+    styles = cfg.get("styles") or default_styles
+    widths = cfg.get("widths") or default_widths
+
+    # output: None/"" -> show(); else savefig to this path
+    out_path = cfg.get("output")
+    if isinstance(out_path, str) and not out_path.strip():
+        out_path = None
+
+    return {
+        "files": files,
+        "x_scales": x_scales,
+        "font_size": font_size,
+        "colors": colors,
+        "styles": styles,
+        "widths": widths,
+        "output": out_path,
+    }
+
+
+def plot_profiles_from_config(CONFIG: dict) -> str:
+    """
+    Execute plotting and Excel export as per CONFIG.
+    Returns the Excel path written (for convenience).
+    """
+    cfg = _validate_and_prepare_config(CONFIG)
+
+    files = cfg["files"]
+    x_scales = cfg["x_scales"]
+    font_size = cfg["font_size"]
+    colors = cfg["colors"]
+    styles = cfg["styles"]
+    widths = cfg["widths"]
+    out_path = cfg["output"]
+
+    # Matplotlib font sizing baseline
+    plt.rcParams.update({"font.size": font_size})
+
+    # Cycle styling if shorter than the number of series
+    col_iter = _cycle(colors)
+    sty_iter = _cycle(styles)
+    wid_iter = _cycle(widths)
 
     fig, ax = plt.subplots()
 
-    col_iter = itertools.cycle(colors)
-    sty_iter = itertools.cycle(styles)
-    w_iter = itertools.cycle(widths)
-
-    series_list = []
+    # Collect columns for Excel export; each series contributes 2 columns
+    series_list: List[pd.Series] = []
 
     for file, scale in zip(files, x_scales):
         x, y = load_profile(file)
         x_scaled = x * scale
-        label = os.path.basename(file)[:-4]
+        label = os.path.basename(file)
+        if label.lower().endswith(".csv"):
+            label = label[:-4]
+
         ax.plot(
             x_scaled,
             y,
             color=next(col_iter),
             linestyle=next(sty_iter),
-            linewidth=next(w_iter),
+            linewidth=next(wid_iter),
             label=label,
         )
-        # Prepare labeled Series for Excel
-        series_list.append(pd.Series(x_scaled, name=f"Scaled X ({label})"))
-        series_list.append(pd.Series(y, name=f"Y ({label})"))
 
+        series_list.append(pd.Series(x_scaled, name=f"Scaled X ({label})"))
+        series_list.append(pd.Series(y,        name=f"Y ({label})"))
+
+    # Axes labels and ticks
     ax.set_xlabel("Distance in Pixels", fontsize=font_size + 8)
     ax.set_ylabel("Normalized Profile", fontsize=font_size + 8)
-
     ax.xaxis.set_minor_locator(mticker.AutoMinorLocator(5))
     ax.yaxis.set_minor_locator(mticker.AutoMinorLocator(5))
-
     ax.tick_params(axis="both", which="major", labelsize=font_size + 4)
     ax.tick_params(axis="both", which="minor", labelsize=font_size + 2)
-
     ax.legend(fontsize=font_size + 2)
     fig.tight_layout()
 
-    # Save figure if requested
+    # Save/show and decide Excel path
     if out_path:
+        # Ensure folder exists
+        out_dir = os.path.dirname(out_path)
+        if out_dir and not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
         fig.savefig(out_path, dpi=300)
         excel_path = os.path.splitext(out_path)[0] + "_export.xlsx"
     else:
         plt.show()
         excel_path = "profiles_export.xlsx"
 
-    # Export to Excel using concatenation (handles varying lengths)
+    # Concatenate into a single DataFrame (handles differing lengths)
     df = pd.concat(series_list, axis=1)
     df.index.name = "Index"
     df.to_excel(excel_path, index=True)
     print(f"[INFO] Exported scaled profile data to: {excel_path}")
 
-
-def parse_cli():
-    p = argparse.ArgumentParser(description="Plot multiple x-y CSV profiles.")
-    p.add_argument("files", nargs="+", help="CSV files with two columns: x,y")
-    p.add_argument(
-        "--x-scales",
-        default="",
-        help="Comma-separated list of x scale factors (one per file, default 1)",
-    )
-    p.add_argument("--font-size", type=int, default=12, help="Base font size")
-    p.add_argument("--colors", default="", help='Comma-sep list of colors (e.g. "C0,#ff0000,C2")')
-    p.add_argument("--styles", default="", help='Comma-sep list of line styles (e.g. "solid,dashed,dotted")')
-    p.add_argument("--widths", default="", help='Comma-sep list of line widths (e.g. "1.5,2,1.5")')
-    p.add_argument("--output", "-o", help="Save figure instead of showing (file name)")
-    return p.parse_args()
+    return excel_path
 
 
-def main():
-    args = parse_cli()
-
-    def to_list(s, cast=str):
-        return [cast(v) for v in s.split(",")] if s else None
-
-    x_scales = to_list(args.x_scales, float)
-    colors = to_list(args.colors, str)
-    styles = to_list(args.styles, str)
-    widths = to_list(args.widths, float)
-
-    if x_scales and len(x_scales) != len(args.files):
-        raise ValueError("Number of x-scales must match number of input files.")
-
-    plot_profiles(
-        args.files,
-        x_scales=x_scales,
-        font_size=args.font_size,
-        colors=colors,
-        styles=styles,
-        widths=widths,
-        out_path=args.output,
-    )
-
-
+# ------------------------------
+# Example CONFIG and entry point
+# ------------------------------
 if __name__ == "__main__":
-    main()
+    CONFIG = {
+        "files": [
+            "ground_truth.csv",
+            "noisy.csv",
+            "ml_processed.csv",
+        ],
+        "x_scales": [0.25, 0.25, 0.25],
+        "font_size": 12,
+        "colors": ["C0", "C1", "C2"],
+        "styles": ["solid", "dashed", "dotted"],
+        "widths": [1.5, 1.5, 2.0],
+        "output": "aiprocessed_accuracy_testing_profiles.png",  # set to None or "" to show() instead
+    }
+
+    # Run with the example config
+    plot_profiles_from_config(CONFIG)
