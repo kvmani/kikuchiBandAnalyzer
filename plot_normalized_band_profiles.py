@@ -159,6 +159,7 @@ def plot_profiles_from_config(CONFIG: dict) -> str:
     else:
         plt.show()
         excel_path = "profiles_export.xlsx"
+    plt.show()
 
     # Concatenate into a single DataFrame (handles differing lengths)
     df = pd.concat(series_list, axis=1)

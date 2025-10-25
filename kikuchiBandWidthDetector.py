@@ -288,7 +288,7 @@ if __name__ == "__main__":
     ##### now 460X460 cases
     SOURCE, jsonFile, config = SOURCE_ROOT+r"groundTruth\0_0_0_0pctStrain_460x460.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
     SOURCE, jsonFile, config = SOURCE_ROOT+r"noisyImages_2\0_0_0_0pctStrain_460x460_noisy.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"Images_ai_processed\cyclegan_kikuchi_model_weights\de_blur_noise_accuracy\test_latest\images\0_0_0_0pctStrain_460x460__level_1_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
+    # SOURCE, jsonFile, config = SOURCE_ROOT+r"Images_ai_processed\cyclegan_kikuchi_model_weights\de_blur_noise_accuracy\test_latest\images\0_0_0_0pctStrain_460x460__level_1_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
     # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
     # SOURCE, jsonFile, config = SOURCE_ROOT+r"ai_processed\0_0_0_0_pct.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
 
