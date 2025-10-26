@@ -585,14 +585,15 @@ if __name__ == "__main__":
             r"C:\Users\kvman\PycharmProjects\kikuchiBandAnalyzer\testData\groundTruth\0_45_0_0pctStrain_460x460.bmp"
             #r"testData/groundTruth/0_45_0_0pctStrain_460x460.bmp",
             ], # <-- edit me
-       # "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
+        "input_path": r"E:\Amrutha\accuracy_testing\trainB",  # <-- edit me
+        "input_path": r"tmp_sim_out",  # <-- edit me
 
-        "outputFolder": r"testData/noisyImages_2",  # OPTIONAL; remove or None to keep old behavior
+        "outputFolder": r"tmp_sim_out_noisy",  # OPTIONAL; remove or None to keep old behavior
 
         "noise": {
             "type": "gaussian",     # currently only 'gaussian' supported
             "variance": 400.0,       # variance of base Gaussian (sigma^2). Example: 400 -> sigma=20
-            "amplitude": 10.0,       # scalar multiplier applied to the Gaussian sample
+            "amplitude": 1.0,       # scalar multiplier applied to the Gaussian sample
             "mean": 0.0,             # mean of Gaussian (typically 0)
         },
         "blur": {

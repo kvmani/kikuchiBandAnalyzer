@@ -26,6 +26,7 @@ import glob
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Iterable
 
+import PIL.Image
 from PIL import Image
 import numpy as np
 
@@ -102,6 +103,7 @@ class CropTaskConfig:
     input_files: List[str] = field(default_factory=list)
     simulate: bool = True
     output_folder: str = "./out"
+    circualar_mask: bool = True
     target_size: Tuple[int, int] = (460, 460)
     crop: CropRange = field(default_factory=lambda: CropRange(2, 50, 3))
     debug: bool = False
@@ -255,6 +257,43 @@ class ImageCropper:
 
     def resize_image(self, img: Image.Image, size: Tuple[int, int]) -> Image.Image:
         return img.resize(size, resample=Image.BICUBIC)
+    @staticmethod
+    def apply_circular_mask(image_array):
+        """
+        Applies a circular mask to a square image array.
+
+        Parameters:
+        -----------
+        image_array : numpy.ndarray
+            The input image array to mask.
+
+        Returns:
+        --------
+        masked_array : numpy.ndarray
+            The masked image array.
+        mask : numpy.ndarray
+            The mask applied to the image array.
+        """
+        image_array = np.array(image_array)
+        assert image_array.shape[0] == image_array.shape[1], "Image must be square (nXn shape)"
+        size = image_array.shape[0]
+        center = size // 2
+        radius = center
+
+        Y, X = np.ogrid[:size, :size]
+        dist_from_center = np.sqrt((X - center) ** 2 + (Y - center) ** 2)
+        mask = dist_from_center <= radius
+
+        if image_array.ndim == 2:  # Grayscale image
+            masked_array = np.zeros_like(image_array)
+            masked_array[mask] = image_array[mask]
+        elif image_array.ndim == 3:  # Color image
+            masked_array = np.zeros_like(image_array)
+            for i in range(image_array.shape[2]):  # Apply mask to each channel
+                masked_array[:, :, i] = np.where(mask, image_array[:, :, i], 0)
+
+        return PIL.Image.fromarray(masked_array)
+
 
     # ---- Filename helpers ----
     @staticmethod
@@ -302,6 +341,8 @@ class ImageCropper:
                 continue
 
             resized = self.resize_image(cropped, self.cfg.target_size)
+            if self.cfg.circualar_mask:
+                resized = self.apply_circular_mask(resized)
 
             # Save
             out_path = self._output_path(base_name, pct)
@@ -335,26 +376,27 @@ class ImageCropper:
 if __name__ == "__main__":
     # Editable configuration dictionary
     config = {
-        "input_folder": None,                     # e.g., "./images" or None
-        "input_files": [
-            #r'C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 45 0\1840x1840.BMP',
-            r'C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 0 0\1840x1840.BMP',
-                        ],                        # e.g., ["/path/a.png", "/path/b.jpg"]
+        "input_folder": r"C:\Users\kvman\Documents\ml_data\cyclegan_target\trainA",                     # e.g., "./images" or None
+        # "input_files": [
+        #     #r'C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 45 0\1840x1840.BMP',
+        #     r'C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 0 0\1840x1840.BMP',
+        #                 ],                        # e.g., ["/path/a.png", "/path/b.jpg"]
         "simulate": False,                         # DEFAULT True per user request
-        "output_folder": "./tmp_sim_out",        # default output for simulation
+        "output_folder": r"C:\Users\kvman\Documents\ml_data\cyclegan_target\trainA_cropped",           # default output for simulation
         "target_size": (460, 460),
-        "crop": {"start": 5, "stop": 25, "step": 5},
-        "debug": True,                           # Set True to see triptych panels
+        "crop": {"start": 20, "stop": 25, "step": 5},
+        "debug": False,                           # Set True to see triptych panels
         "debug_max_panels_per_image": None,       # e.g., 5 to limit panels
         "log_level": "INFO",                     # "DEBUG" for more details
         "overwrite": True,
+        "circualar_mask":True
     }
 
     # Build the typed config objects
     crop_cfg = CropRange(
-        start=int(config.get("crop", {}).get("start", 2)),
-        stop=int(config.get("crop", {}).get("stop", 50)),
-        step=int(config.get("crop", {}).get("step", 3)),
+        start=int(config.get("crop", {}).get("start", 5)),
+        stop=int(config.get("crop", {}).get("stop", 25)),
+        step=int(config.get("crop", {}).get("step", 5)),
     )
 
     task_cfg = CropTaskConfig(
