@@ -1,66 +1,104 @@
 # Kikuchi Band Analyzer
 
-This project detects Kikuchi band widths from EBSD data. The pipeline is driven
-by YAML configuration files and can run in a fast debug mode or a full
-processing mode.
+Kikuchi Band Analyzer is a research Python toolkit for measuring Kikuchi band widths from EBSD diffraction patterns. The main entry point is a YAML‑driven batch pipeline (`KikuchiBandWidthAutomator.py`) designed to run non‑interactively in normal mode and on a smaller/cropped dataset in debug mode.
 
-## Features
-- **Config driven**: All parameters such as data paths, phase information and
-  detection thresholds are defined in YAML files (e.g. `bandDetectorOptions.yml`).
-- **Automated workflow**: `KikuchiBandWidthAutomator.py` loads the EBSD data,
-  runs band detection and writes results to CSV/HDF5.
-- **Band width detection**: `kikuchiBandWidthDetector.py` implements the core
-  logic to detect bands in each pattern.
-- **Logging**: Scripts use Python's logging module for progress reporting.
+This repo also contains utilities for exporting EBSD patterns to images (useful for machine‑learning workflows) and reconstructing processed images back into HDF5.
 
-## Usage
-### Normal Mode
-1. Edit `bandDetectorOptions.yml` to point to your EBSD `.h5` file and adjust
-   detection parameters.
-2. Run the automator:
+## Quickstart (run on included test data)
+
+1. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. (Optional) Disable interactive plots if you are on a headless machine:
+   - Set `skip_display_EBSDmap: true` in `bandDetectorOptionsHcp.yml`.
+
+3. Run the pipeline:
+
    ```bash
    python KikuchiBandWidthAutomator.py
    ```
-   Results are written next to the input file as `<name>_bandOutputData.csv` and
-   `<name>_filtered_band_data.csv`.
 
-### Debug Mode
-Set `debug: true` in the YAML file to process only a cropped region of the data.
-Debug mode enables detailed `DEBUG` logging and is useful for quick tests.
+By default the script uses `bandDetectorOptionsHcp.yml`, which points to `testData/Test_Ti.oh5` and `testData/Test_Ti.ang`.
 
-## Script Overview
-### KikuchiBandWidthAutomator.py
-1. **prepare_dataset** – loads the HDF5 data and optionally crops it when debug
-   mode is enabled.
-2. **simulate_and_index** – simulates Kikuchi patterns and determines expected
-   band positions using `kikuchipy` and `orix`.
-3. **detect_band_widths** – delegates to `KikuchiBatchProcessor` to compute band
-   widths for every pattern.
-4. **export_results** – saves CSV summaries and writes computed arrays back to
-   the HDF5/ANG files.
+## Run on your own data
 
-### kikuchiBandWidthDetector.py
-- **BandDetector** – examines a single pattern and measures band widths based on
-  marker points.
-- **KikuchiBatchProcessor** – iterates over a grid of patterns and aggregates
-  results.
-- Helper functions load image stacks and JSON marker definitions.
+### 1) Prepare input files
 
-## Requirements
-Install dependencies with:
-```bash
-pip install -r requirements.txt
-```
+Place a matching pair in the same folder (base name must match):
 
-## Configuration File Fields
-- `h5_file_path`: path to the EBSD dataset.
-- `phase_list`: crystal phase description used for simulation.
-- `hkl_list`: HKL lines to label and detect.
-- `desired_hkl`: HKL group for band width statistics.
-- `smoothing_sigma`, `rectWidth`, `min_psnr`: detection parameters.
-- `debug`, `crop_start`, `crop_end`: enable and configure debug mode.
+- `sample.oh5` (or `sample.h5`)
+- `sample.ang`
 
-## Output
-The automator creates two CSV files containing raw and filtered band
-measurements. When run in normal mode it also writes band width, strain and
-stress arrays back into the original HDF5 file.
+The code expects a common EDAX/TSL layout with patterns under `/<scan_name>/EBSD/Data/Pattern` (the scripts pick the first top‑level group that is not `Manufacturer` or `Version` and treat that as `<scan_name>`).
+
+### 2) Choose and edit a YAML config
+
+Pick an options file close to your material and update it (examples include `bandDetectorOptionsHcp.yml`, `bandDetectorOptionsMagnetite.yml`, and `bandDetectorOptionsDebug.yml`).
+
+At minimum, set:
+
+- `h5_file_path`: path to your `.oh5`/`.h5` file
+- `phase_list`: crystal structure used for simulation/indexing
+- `hkl_list`: reflectors to consider
+- `desired_hkl`: target plane family for reporting band widths
+- (optional) `debug`, `crop_start`, `crop_end`: faster iteration on a subset
+
+### 3) Run with your chosen config
+
+`KikuchiBandWidthAutomator.py` currently hard‑codes the default config in `main()`. To run a different YAML:
+
+- Option A (simple): edit `KikuchiBandWidthAutomator.py` to pass your YAML:
+  - `bwa = BandWidthAutomator(config_path="bandDetectorOptionsMagnetite.yml")`
+- Option B (no edits): run from the command line using Python:
+
+  ```bash
+  python -c "from KikuchiBandWidthAutomator import BandWidthAutomator; BandWidthAutomator('bandDetectorOptionsMagnetite.yml').run()"
+  ```
+
+## Debug vs normal mode
+
+- Normal mode: `debug: false` (processes the full dataset)
+- Debug mode: `debug: true` (crops the dataset using `crop_start`/`crop_end` for faster turnaround)
+
+Some options trigger plots (e.g. EBSD map display). For unattended runs, set `skip_display_EBSDmap: true` and disable plotting flags in your YAML.
+
+## Outputs
+
+For an input file `<stem>.oh5`/`<stem>.h5`, the pipeline writes outputs next to the input:
+
+- CSV summaries:
+  - `<stem>_bandOutputData.csv`
+  - `<stem>_filtered_band_data.csv`
+- An augmented HDF5 copy:
+  - `<stem>_modified.h5`
+  - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `strain`, `stress`, …).
+- Derived `.ang` files with additional columns:
+  - `<stem>_modified_<suffix>.ang`
+
+Notes:
+- The pipeline does not overwrite your original `.oh5`/`.h5`; it works on copies.
+- If your input is `.oh5`, the code may create an intermediate `.h5` copy with the same stem for processing.
+
+## Optional: CycleGAN / ML preprocessing workflow
+
+If you run a CycleGAN (or other model) to enhance patterns before band‑width analysis, see `HowToRunAnalysis.md` for a step‑by‑step workflow:
+
+- Export patterns to PNG (`hdf5_image_export_and_validation.py`)
+- Run CycleGAN inference (external repo)
+- Reconstruct processed PNGs back into HDF5 (`hdf5_image_export_and_validation.py`)
+- Run the band‑width pipeline on the reconstructed file
+
+## Repository layout (high level)
+
+- `KikuchiBandWidthAutomator.py`: end‑to‑end batch pipeline (YAML‑driven)
+- `kikuchiBandWidthDetector.py`: per‑pattern detection + batch processing
+- `hdf5_image_export_and_validation.py`: export/reconstruct patterns for ML workflows
+- `bandDetectorOptions*.yml`: example configuration files
+- `testData/`: small example datasets and fixtures
+
+## Contributing
+
+See `contribute.md` and `AGENTS.md` for contribution guidelines (docstrings, logging, debug/normal run modes, and non‑interactive scripts).
