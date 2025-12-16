@@ -221,7 +221,7 @@ class BandWidthAutomator:
             band_stress_array = band_strain_array * elastic_modulus
 
             ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
-            #ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_strain", IQ=band_strain_array)
+            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_eff_deff_ratio", IQ=eff_ratio_array)
             #ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
             ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
             ut.modify_ang_file(
