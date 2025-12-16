@@ -1,15 +1,44 @@
-# How to Run the Analysis (CycleGAN → EBSD Reconstruction → Band Widths)
+# How to Run the Analysis in PyCharm (Windows) — CycleGAN → EBSD Reconstruction → Band Widths
 
-This guide documents an end‑to‑end workflow:
+This guide is written for **beginners using Windows + PyCharm**. Every step also includes the **equivalent terminal command** (so you can still run everything from `cmd`/PowerShell/Linux terminal if you prefer). Terminal examples use `python`; on some Windows setups you may need to use `py` instead.
 
-1. Export EBSD patterns from an `.oh5`/`.h5` into 8‑bit PNGs (`kikuchiBandAnalyzer`).
-2. Run a CycleGAN model to enhance/denoise the PNGs (external repo).
-3. Reconstruct the processed PNGs back into a new HDF5 file (`kikuchiBandAnalyzer`).
-4. Run the band‑width pipeline using a YAML configuration (`kikuchiBandAnalyzer`).
+You will do four main things:
 
-Where commands differ, both Windows and Linux/macOS notes are included.
+1. Export EBSD patterns from an `.oh5`/`.h5` into 8‑bit PNGs (`hdf5_image_export_and_validation.py` in this repo).
+2. Run a CycleGAN model to enhance/denoise the PNGs (external CycleGAN repo).
+3. Reconstruct the processed PNGs back into a new HDF5 file (`hdf5_image_export_and_validation.py` in this repo).
+4. Run the band‑width pipeline using a YAML configuration (`KikuchiBandWidthAutomator.py` in this repo).
 
-## Assumptions and expectations
+## Before you start (Lab computer)
+
+On the lab computer, PyCharm + the Python environment are already set up for you. You do **not** need to configure the interpreter or install packages.
+
+### Open the project (if it is not already open)
+
+1. Start PyCharm.
+2. Click **Open** (or **File → Open…**) and select the `kikuchiBandAnalyzer` folder.
+3. In the left **Project** panel, you should see files like `KikuchiBandWidthAutomator.py` and `hdf5_image_export_and_validation.py`.
+
+### (Optional) Quick sanity test (recommended)
+
+Before doing the full CycleGAN workflow, confirm the repo runs on the included test data:
+
+- In PyCharm: open `KikuchiBandWidthAutomator.py` and click the green **Run** triangle.
+- In a terminal:
+
+  ```bash
+  python KikuchiBandWidthAutomator.py
+  ```
+
+If this fails (missing packages / interpreter errors), ask your lab admin/TA rather than changing PyCharm settings.
+
+## Important note: PyCharm “Debug” vs repo `debug: true`
+
+PyCharm has a **Debug** button that runs code under a debugger (breakpoints, step‑through, etc.).
+
+This repo also has a YAML option `debug: true` which means: **run on a smaller/cropped subset for faster turnaround**. These are unrelated—don’t worry about the PyCharm Debug button unless you actually want to debug code.
+
+## Assumptions and expectations (data layout)
 
 - Your EBSD dataset exists as a matching pair in the same folder:
   - `sample.oh5` (or `sample.h5`)
@@ -17,18 +46,11 @@ Where commands differ, both Windows and Linux/macOS notes are included.
 - The HDF5 layout follows a common EDAX/TSL convention where patterns are stored under:
   - `/<scan_name>/EBSD/Data/Pattern`
   - The scripts in this repo automatically pick the first top‑level group that is not `Manufacturer` or `Version` and treat that as `<scan_name>`.
-- The CycleGAN step outputs PNGs with the **exact same filenames** as the exported inputs (e.g. `EBSP_000001.png`, `EBSP_000002.png`, …).
+- The CycleGAN step must output PNGs with the **exact same filenames** as the exported inputs (e.g. `EBSP_000001.png`, `EBSP_000002.png`, …).
 
 If any of the above is not true for your dataset, you may need to adapt the scripts or add a small conversion step.
 
-## Prerequisites
-
-- Python environment with this repo’s dependencies installed:
-  - `pip install -r requirements.txt`
-- A clone of the CycleGAN repo you use for inference (for example, `pytorch-CycleGAN-and-pix2pix`) and a working PyTorch install.
-- CycleGAN model weights available in the location expected by your inference script.
-
-## Step 1 — Prepare your input data
+## Step 1 — Prepare your input folder (HDF5 + ANG)
 
 Put your `.oh5`/`.h5` and `.ang` in one directory (base name must match):
 
@@ -38,60 +60,79 @@ my_scan/
   sample.ang
 ```
 
+Tip for beginners: create a new folder like `data/my_scan/` inside the repo so paths are easy to find from PyCharm.
+
 ## Step 2 — Export EBSD patterns to PNGs (export stage)
 
 This repo provides `hdf5_image_export_and_validation.py` which exports the pattern dataset to individual PNG images.
 
-1. Open `hdf5_image_export_and_validation.py` and edit the `config = { ... }` block at the bottom.
+### 2.1 Edit the export config (PyCharm)
 
-   Key fields:
-   - `hdf5_file_path`: your `.oh5`/`.h5` file path
+1. In PyCharm, open `hdf5_image_export_and_validation.py`.
+2. Scroll to the bottom to the `config = { ... }` block inside `if __name__ == "__main__":`.
+3. Set these fields:
+   - `hdf5_file_path`: path to your `.oh5`/`.h5`
    - `output_dir`: where PNGs will be written
    - `stage`: set to `"export"`
-   - `options.convert_to_8bit`: keep `True` (CycleGAN typically expects 8‑bit inputs)
 
-   Example (Windows paths shown):
+Example (Windows paths shown):
 
-   ```python
-   config = {
-       "hdf5_file_path": r"C:\path\to\sample.oh5",
-       "output_dir": "exported_images/sample_export",
-       "processed_image_dir": r"C:\path\to\processed\images",  # ignored in export stage
-       "image_shape": (0, 0, 0),  # ignored in export stage
-       "stage": "export",
-       "options": {
-           "base_name": "EBSP_",
-           "index_format": "%06d",
-           "file_extension": ".png",
-           "convert_to_8bit": True,
-           "convert_back_to_16bit": True,
-           "skip_image_export": True,
-       },
-   }
-   ```
+```python
+config = {
+    "hdf5_file_path": r"C:\path\to\sample.oh5",
+    "output_dir": "exported_images/sample_export",
+    "processed_image_dir": r"C:\path\to\processed\images",  # ignored in export stage
+    "image_shape": (0, 0, 0),  # ignored in export stage
+    "stage": "export",
+    "options": {
+        "base_name": "EBSP_",
+        "index_format": "%06d",
+        "file_extension": ".png",
+        "convert_to_8bit": True,
+        "convert_back_to_16bit": True,
+        "skip_image_export": True,  # currently not used
+    },
+}
+```
 
-   Notes:
-   - The script currently exports from `/<scan_name>/EBSD/Data/Pattern` automatically.
-   - `options.skip_image_export` is currently ignored during export (images are always written when `stage == "export"`).
+Windows path tip: use a raw string like `r"C:\...\file.oh5"` to avoid backslash issues.
 
-2. Run:
+### 2.2 Run the export (PyCharm)
 
-   ```bash
-   python hdf5_image_export_and_validation.py
-   ```
+1. Right‑click `hdf5_image_export_and_validation.py` in the **Project** panel.
+2. Click **Run 'hdf5_image_export_and_validation'**.
+3. Watch the **Run** tool window at the bottom for log output.
 
-3. Verify the output folder contains PNGs named like `EBSP_000001.png`, `EBSP_000002.png`, …
+### 2.3 Run the export (terminal alternative)
 
-![Exported images folder highlighted in the IDE](assets/step3_export_folder.png)
+```bash
+python hdf5_image_export_and_validation.py
+```
+
+### 2.4 Verify the exported PNGs (use the screenshot)
+
+After export, your `output_dir` should contain PNGs named like `EBSP_000001.png`, `EBSP_000002.png`, …
+
+In PyCharm, locate the folder in the left **Project** panel (example shown here):
+
+![Exported images folder highlighted in PyCharm](assets/step3_export_folder.png)
 
 ## Step 3 — Run CycleGAN inference on the exported PNGs
 
-Run your CycleGAN inference so that:
+This step happens in your CycleGAN repo (not in this repo). The key requirement is:
 
-- The **input folder** is the exported PNG folder from Step 2.
-- The **output folder** contains **PNG files with the same filenames** as the input folder.
+- Input folder = the exported PNG folder from Step 2
+- Output folder = PNG files **with the same filenames** as the input
 
-Because CycleGAN setups vary, use your CycleGAN repo’s docs and/or run:
+### 3.1 Open a terminal inside PyCharm (use the screenshot)
+
+If you like staying inside PyCharm, open the **Terminal** tool window:
+
+![Opening the terminal in PyCharm](assets/step4_open_terminal.png)
+
+Then `cd` into your CycleGAN repo and run your inference command there.
+
+Because CycleGAN setups vary, follow your CycleGAN repo’s docs and/or run:
 
 ```bash
 python run_kikuchi_inference.py --help
@@ -101,7 +142,8 @@ The processed images are typically placed under a folder such as:
 
 `<results_dir>/<model_name>/test_latest/images`
 
-![Opening the terminal in the IDE](assets/step4_open_terminal.png)
+After inference, confirm you see many PNGs (and that names match `EBSP_000001.png`, …):
+
 ![Processed images generated by CycleGAN](assets/step4_inference_results.png)
 
 ### Windows note about multi‑line commands
@@ -110,25 +152,38 @@ If you see examples that use `\` to continue a command on the next line, those a
 
 ## Step 4 — Reconstruct processed PNGs back into a new HDF5 file (reconstruct stage)
 
-1. In `hdf5_image_export_and_validation.py`, edit the config block again:
+Now you will tell `hdf5_image_export_and_validation.py` where the processed images are and what the original image stack shape is.
 
-   - Set `stage` to `"reconstruct"`.
-   - Set `processed_image_dir` to the folder that directly contains `EBSP_000001.png`, …
-   - Set `image_shape` to the original pattern stack shape `(N, height, width)`.
-     - You can get this from the original HDF5 dataset shape, or from your export step logs.
+### 4.1 Edit the reconstruct config (PyCharm)
 
-2. Run:
+In `hdf5_image_export_and_validation.py`, edit the `config = { ... }` block again:
 
-   ```bash
-   python hdf5_image_export_and_validation.py
-   ```
+- Set `stage` to `"reconstruct"`.
+- Set `processed_image_dir` to the folder that directly contains `EBSP_000001.png`, …
+- Set `image_shape` to the original pattern stack shape `(N, height, width)`.
+  - You can get this from the original HDF5 dataset shape, or from your export step logs.
 
-3. Confirm output:
-
-   - A sibling file named `<original_stem>_AI_modified.h5` is written next to your input file.
-   - Even if the input file is `.oh5`, the script currently writes the reconstruction output using a `.h5` extension. If your downstream tools require `.oh5`, you can rename the extension (it remains standard HDF5).
+Here is what this edit looks like in PyCharm (example screenshot):
 
 ![Updating `processed_image_dir` and setting stage to reconstruct](assets/step5_config_reconstruct.png)
+
+### 4.2 Run the reconstruct step (PyCharm)
+
+Run the same script again:
+
+1. Right‑click `hdf5_image_export_and_validation.py`
+2. Click **Run 'hdf5_image_export_and_validation'**
+
+### 4.3 Run the reconstruct step (terminal alternative)
+
+```bash
+python hdf5_image_export_and_validation.py
+```
+
+### 4.4 Confirm output HDF5
+
+- A sibling file named `<original_stem>_AI_modified.h5` is written next to your input file.
+- Even if the input file is `.oh5`, the script currently writes the reconstruction output using a `.h5` extension. If your downstream tools require `.oh5`, you can rename the extension (it remains standard HDF5).
 
 ## Step 5 — Copy/rename the `.ang` so the base name matches
 
@@ -141,24 +196,56 @@ Example:
 
 So copy your original `sample.ang` and rename it to `sample_AI_modified.ang` in the same folder.
 
-## Step 6 — Run the band‑width analyzer (YAML‑driven, non‑interactive)
+## Step 6 — Run the band‑width analyzer (YAML‑driven)
 
-1. Choose an options file (or make a copy) such as:
-   - `bandDetectorOptionsMagnetite.yml`
-   - `bandDetectorOptionsHcp.yml`
+### 6.1 Choose and edit a YAML options file
 
-2. Edit it:
-   - Set `h5_file_path` to your reconstructed HDF5 path (e.g. `.../sample_AI_modified.h5`).
-   - Set `debug: true` (fast cropped run) or `debug: false` (full run).
-   - If you are on a headless machine, set `skip_display_EBSDmap: true` to avoid GUI windows.
+Pick an options file (or make a copy) such as:
 
-3. Run:
+- `bandDetectorOptionsMagnetite.yml`
+- `bandDetectorOptionsHcp.yml`
+- `bandDetectorOptionsDebug.yml` (useful for faster testing)
 
-   ```bash
-   python KikuchiBandWidthAutomator.py
+Edit it:
+
+- Set `h5_file_path` to your reconstructed HDF5 path (e.g. `.../sample_AI_modified.h5`).
+- Set `debug: true` (fast cropped run) or `debug: false` (full run).
+- If you want to avoid GUI windows, set `skip_display_EBSDmap: true` and disable plotting options in the YAML.
+
+### 6.2 Run the analyzer (PyCharm)
+
+Simplest PyCharm approach (recommended for beginners):
+
+1. Open `KikuchiBandWidthAutomator.py`
+2. Find `def main():` near the bottom and change the config line from:
+
+   ```python
+   bwa = BandWidthAutomator()
    ```
 
-### Expected outputs
+   to (example):
+
+   ```python
+   bwa = BandWidthAutomator("bandDetectorOptionsMagnetite.yml")
+   ```
+
+3. Click the green **Run** triangle.
+
+### 6.3 Run the analyzer (terminal alternatives)
+
+Option A (edit `KikuchiBandWidthAutomator.py` to point at your YAML), then:
+
+```bash
+python KikuchiBandWidthAutomator.py
+```
+
+Option B (no edits; run with Python directly):
+
+```bash
+python -c "from KikuchiBandWidthAutomator import BandWidthAutomator; BandWidthAutomator('bandDetectorOptionsMagnetite.yml').run()"
+```
+
+## Expected outputs (what files you should see)
 
 Given an input `.../sample_AI_modified.h5`, the automator writes outputs next to it:
 
@@ -170,9 +257,11 @@ Given an input `.../sample_AI_modified.h5`, the automator writes outputs next to
 - One or more derived `.ang` files with new columns appended:
   - `sample_AI_modified_modified_<suffix>.ang`
 
-## Common problems
+## Troubleshooting (common beginner issues)
 
-- **“File not found” for PNGs during reconstruction**: the processed images must keep the exact same filenames as the exported images.
+- **Nothing happens / script can’t import packages**: PyCharm interpreter is wrong or dependencies aren’t installed; re-check Part 0.2 and Part 0.3.
+- **Export writes to an unexpected folder**: check the *working directory* used by your run configuration; easiest fix is to make `output_dir` an absolute path.
+- **“File not found” for PNGs during reconstruction**: `processed_image_dir` must point to the folder that directly contains `EBSP_000001.png`, … and filenames must match the exported names exactly.
 - **Wrong `image_shape`**: reconstruction needs the exact `(N, height, width)` so it can rebuild the full stack.
-- **GUI windows blocking runs**: set `skip_display_EBSDmap: true` and disable plotting options in the YAML.
-- **Unexpected HDF5 layout**: your patterns may not be under `/<scan_name>/EBSD/Data/Pattern`. You will need to adapt the dataset path logic in the scripts.
+- **GUI windows block the run**: set `skip_display_EBSDmap: true` and disable plotting options in the YAML.
+- **Unexpected HDF5 layout**: your patterns may not be under `/<scan_name>/EBSD/Data/Pattern`; you will need to adapt the dataset path logic in the scripts.

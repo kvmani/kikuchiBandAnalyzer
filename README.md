@@ -21,6 +21,8 @@ This repo also contains utilities for exporting EBSD patterns to images (useful 
    python KikuchiBandWidthAutomator.py
    ```
 
+   In PyCharm, you can instead open `KikuchiBandWidthAutomator.py` and click the green **Run** triangle (or right‑click the file → **Run**).
+
 By default the script uses `bandDetectorOptionsHcp.yml`, which points to `testData/Test_Ti.oh5` and `testData/Test_Ti.ang`.
 
 ## Run on your own data
@@ -84,7 +86,7 @@ Notes:
 
 ## Optional: CycleGAN / ML preprocessing workflow
 
-If you run a CycleGAN (or other model) to enhance patterns before band‑width analysis, see `HowToRunAnalysis.md` for a step‑by‑step workflow:
+If you run a CycleGAN (or other model) to enhance patterns before band‑width analysis, see `HowToRunAnalysis.md` for a PyCharm‑first (Windows) step‑by‑step workflow (with terminal equivalents):
 
 - Export patterns to PNG (`hdf5_image_export_and_validation.py`)
 - Run CycleGAN inference (external repo)
