@@ -93,6 +93,21 @@ If you run a CycleGAN (or other model) to enhance patterns before band‑width a
 - Reconstruct processed PNGs back into HDF5 (`hdf5_image_export_and_validation.py`)
 - Run the band‑width pipeline on the reconstructed file
 
+## EBSD Compare GUI (v1)
+
+This repo includes an EBSD scan comparator GUI for aligned OH5 files. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
+
+Common commands:
+
+```bash
+python scripts/make_noisy_oh5.py --config configs/ebsd_compare_config.yml
+python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd_compare_config.yml
+python scripts/run_ebsd_compare_demo.py --config configs/ebsd_compare_config.yml
+pytest -q
+```
+
+Note: generated demo artifacts (noisy OH5 and GUI screenshots) are created locally and are not committed.
+
 ## Repository layout (high level)
 
 - `KikuchiBandWidthAutomator.py`: end‑to‑end batch pipeline (YAML‑driven)
