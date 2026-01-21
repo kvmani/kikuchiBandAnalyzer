@@ -1,0 +1,29 @@
+ebsd_compare:
+  default_map_field: IQ
+  compare_fields:
+    scalars:
+      - IQ
+      - CI
+    patterns:
+      - Pattern
+  display:
+    map_diff_mode: delta
+    pattern_diff_mode: abs_delta
+  field_aliases:
+    IQ:
+      - Image Quality
+    CI:
+      - Confidence Index
+
+noisy_generation:
+  input_path: testData/Test_Ti.oh5
+  output_path: testData/Test_Ti_noisy.oh5
+  seed: 123
+  sigma:
+    IQ: 0.05
+    CI: 0.02
+
+demo:
+  scan_a: testData/Test_Ti.oh5
+  scan_b: testData/Test_Ti_noisy.oh5
+  output_screenshot: tmp/ebsd_compare_gui_proof.png

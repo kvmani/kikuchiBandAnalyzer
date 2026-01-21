@@ -12,6 +12,7 @@ natsort>=8.4,<9.0
 loguru>=0.7,<1.0
 h5py>=3.9,<4.0
 packaging>=23.2,<24.0
+PySide6>=6.5,<7.0
 
 # --- EBSD / Kikuchi pattern analysis ----------------------------------------
 hyperspy>=2.2,<3.0          # new API with hs.plot.markers.Texts :contentReference[oaicite:0]{index=0}

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.tmp/
+tmp/
+debug_artifacts/
+testData/*_noisy.oh5
