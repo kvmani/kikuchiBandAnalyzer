@@ -14,6 +14,54 @@ ebsd_compare:
       - Image Quality
     CI:
       - Confidence Index
+  alignment:
+    enabled: true
+    auto_launch_on_mismatch: true
+    map_fields:
+      - IQ
+      - CI
+    default_map_field: IQ
+    contrast:
+      low_percentile: 2.0
+      high_percentile: 98.0
+      link_maps: true
+    link_view: true
+    point_pairs_min: 3
+    ransac:
+      min_samples: 3
+      residual_threshold: 2.0
+      max_trials: 2000
+    map_interpolation: bilinear
+    warp:
+      mode: constant
+      cval: nan
+      preserve_range: true
+    pattern_sampling: nearest
+    precomputed_alignment_path: null
+    save_alignment_path: tmp/ebsd_alignment.yml
+    control_points:
+      points_a: []
+      points_b: []
+  logging:
+    level: INFO
+    gui_level: INFO
+    gui_max_lines: 1000
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file_path: null
+  debug:
+    nx: 24
+    ny: 24
+    nx_b: 24
+    ny_b: 24
+    rotation_deg: 5.0
+    translation: [2.0, -1.0]
+    noise_sigma:
+      IQ: 0.02
+      CI: 0.01
+    seed: 123
+    include_patterns: false
+    pattern_height: 32
+    pattern_width: 32
 
 noisy_generation:
   input_path: testData/Test_Ti.oh5

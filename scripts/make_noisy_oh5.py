@@ -82,7 +82,8 @@ def main() -> None:
     """Run the noise generation script."""
 
     args = build_arg_parser().parse_args()
-    configure_logging(args.debug)
+    log_config = load_yaml_config(args.config).get("ebsd_compare", {}).get("logging")
+    configure_logging(args.debug, log_config)
     logger = logging.getLogger(__name__)
     if args.debug:
         input_path = Path("tmp/debug_input.oh5")

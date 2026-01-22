@@ -12,6 +12,8 @@ import numpy as np
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import alignment_from_config
+from kikuchiBandAnalyzer.ebsd_compare.simulated import SimulatedScanFactory
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging, load_yaml_config
 
 
@@ -42,7 +44,29 @@ class CompareExporter:
         field_aliases = self._config.get("field_aliases", {})
         dataset_a = OH5ScanFileReader.from_path(scan_a, field_aliases=field_aliases)
         dataset_b = OH5ScanFileReader.from_path(scan_b, field_aliases=field_aliases)
-        engine = ComparisonEngine(dataset_a, dataset_b, self._config, self._logger)
+        try:
+            self.export_datasets(dataset_a, dataset_b, output_dir)
+        finally:
+            dataset_a.close()
+            dataset_b.close()
+
+    def export_datasets(self, dataset_a, dataset_b, output_dir: Path) -> None:
+        """Export comparison maps for preloaded datasets.
+
+        Parameters:
+            dataset_a: ScanDataset for scan A.
+            dataset_b: ScanDataset for scan B.
+            output_dir: Output directory for exports.
+
+        Returns:
+            None.
+        """
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        alignment = alignment_from_config(self._config.get("alignment", {}), self._logger)
+        engine = ComparisonEngine(
+            dataset_a, dataset_b, self._config, self._logger, alignment=alignment
+        )
         mode = self._config.get("display", {}).get("map_diff_mode", "delta")
         scalar_fields = self._config.get("compare_fields", {}).get("scalars", [])
         if not scalar_fields:
@@ -50,8 +74,6 @@ class CompareExporter:
         for field in scalar_fields:
             maps = engine.map_triplet(field, mode)
             self._export_map_triplet(output_dir, field, maps)
-        dataset_a.close()
-        dataset_b.close()
 
     def _export_map_triplet(
         self, output_dir: Path, field: str, maps: Dict[str, np.ndarray]
@@ -96,13 +118,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scan-a",
         type=Path,
-        required=True,
+        required=False,
         help="Path to scan A OH5 file.",
     )
     parser.add_argument(
         "--scan-b",
         type=Path,
-        required=True,
+        required=False,
         help="Path to scan B OH5 file.",
     )
     parser.add_argument(
@@ -114,7 +136,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging.",
+        help="Enable debug logging and use simulated scans if paths are omitted.",
     )
     return parser
 
@@ -123,10 +145,19 @@ def main() -> None:
     """Run the compare exporter."""
 
     args = build_arg_parser().parse_args()
-    configure_logging(args.debug)
     config = load_yaml_config(args.config).get("ebsd_compare", {})
-    exporter = CompareExporter(config, logging.getLogger(__name__))
-    exporter.export(args.scan_a, args.scan_b, args.output_dir)
+    configure_logging(args.debug, config.get("logging"))
+    logger = logging.getLogger(__name__)
+    exporter = CompareExporter(config, logger)
+    if args.scan_a and args.scan_b:
+        exporter.export(args.scan_a, args.scan_b, args.output_dir)
+        return
+    if args.debug:
+        factory = SimulatedScanFactory.from_config(config.get("debug", {}), logger)
+        scan_a, scan_b = factory.create_pair()
+        exporter.export_datasets(scan_a, scan_b, args.output_dir)
+        return
+    raise SystemExit("Provide --scan-a/--scan-b or use --debug for simulated data.")
 
 
 if __name__ == "__main__":

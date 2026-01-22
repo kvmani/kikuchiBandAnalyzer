@@ -4,3 +4,4 @@ __pycache__/
 tmp/
 debug_artifacts/
 testData/*_noisy.oh5
+.venv/

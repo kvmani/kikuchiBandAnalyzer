@@ -14,7 +14,19 @@ from matplotlib.figure import Figure
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
+from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import (
+    GuiLogHandler,
+    LogEmitter,
+    LogViewer,
+)
+from kikuchiBandAnalyzer.ebsd_compare.gui.registration_window import RegistrationDialog
+from kikuchiBandAnalyzer.ebsd_compare.model import ScanDataset
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import (
+    AlignmentResult,
+    alignment_from_config,
+)
+from kikuchiBandAnalyzer.ebsd_compare.simulated import SimulatedScanFactory
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging, load_yaml_config
 
 matplotlib.use("QtAgg")
@@ -87,7 +99,12 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._scan_b = None
         self._engine: Optional[ComparisonEngine] = None
         self._pattern_field: Optional[str] = None
+        self._alignment_result: Optional[AlignmentResult] = None
+        self._log_emitter: Optional[LogEmitter] = None
+        self._log_handler: Optional[GuiLogHandler] = None
+        self._log_viewer: Optional[LogViewer] = None
         self._init_ui()
+        self._attach_log_handler()
 
     def _init_ui(self) -> None:
         """Initialize the GUI layout and widgets."""
@@ -120,6 +137,9 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._map_field_combo = QtWidgets.QComboBox()
         self._map_field_combo.currentTextChanged.connect(self._update_maps)
         map_control_layout.addWidget(self._map_field_combo)
+        self._registration_button = QtWidgets.QPushButton("Registration")
+        self._registration_button.clicked.connect(self._open_registration_from_button)
+        map_control_layout.addWidget(self._registration_button)
         self._screenshot_button = QtWidgets.QPushButton("Save Screenshot")
         self._screenshot_button.clicked.connect(self._on_save_screenshot)
         map_control_layout.addWidget(self._screenshot_button)
@@ -163,7 +183,58 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._pattern_group = pattern_group
         layout.addLayout(probe_layout)
 
+        log_group = QtWidgets.QGroupBox("Log")
+        log_layout = QtWidgets.QVBoxLayout(log_group)
+        log_config = self._config.get("logging", {})
+        max_lines = int(log_config.get("gui_max_lines", 1000))
+        self._log_viewer = LogViewer(max_lines=max_lines)
+        log_layout.addWidget(self._log_viewer)
+        layout.addWidget(log_group)
+
         self.setCentralWidget(central_widget)
+
+    def _attach_log_handler(self) -> None:
+        """Attach the GUI log handler to the root logger.
+
+        Returns:
+            None.
+        """
+
+        if self._log_viewer is None:
+            return
+        log_config = self._config.get("logging", {})
+        emitter = LogEmitter()
+        emitter.message.connect(self._log_viewer.append_message)
+        handler = GuiLogHandler(emitter)
+        handler.setFormatter(
+            logging.Formatter(
+                log_config.get(
+                    "format",
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                )
+            )
+        )
+        gui_level = log_config.get("gui_level")
+        if gui_level:
+            handler.setLevel(getattr(logging, str(gui_level).upper(), logging.INFO))
+        logging.getLogger().addHandler(handler)
+        self._log_emitter = emitter
+        self._log_handler = handler
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Handle window close events.
+
+        Parameters:
+            event: Qt close event instance.
+
+        Returns:
+            None.
+        """
+
+        if self._log_handler is not None:
+            logging.getLogger().removeHandler(self._log_handler)
+        self._close_scans()
+        super().closeEvent(event)
 
     def load_scans(self, path_a: Path, path_b: Path) -> None:
         """Load scan datasets and update the GUI.
@@ -175,9 +246,71 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
 
         self._logger.info("Loading scans: %s and %s", path_a, path_b)
         field_aliases = self._config.get("field_aliases", {})
-        self._scan_a = OH5ScanFileReader.from_path(path_a, field_aliases=field_aliases)
-        self._scan_b = OH5ScanFileReader.from_path(path_b, field_aliases=field_aliases)
-        self._engine = ComparisonEngine(self._scan_a, self._scan_b, self._config)
+        dataset_a = OH5ScanFileReader.from_path(path_a, field_aliases=field_aliases)
+        dataset_b = OH5ScanFileReader.from_path(path_b, field_aliases=field_aliases)
+        self._file_a_edit.setText(str(path_a))
+        self._file_b_edit.setText(str(path_b))
+        self.load_scan_datasets(dataset_a, dataset_b)
+
+    def load_scan_datasets(self, dataset_a: ScanDataset, dataset_b: ScanDataset) -> None:
+        """Load pre-initialized scan datasets into the GUI.
+
+        Parameters:
+            dataset_a: ScanDataset for scan A.
+            dataset_b: ScanDataset for scan B.
+
+        Returns:
+            None.
+        """
+
+        self._close_scans()
+        self._scan_a = dataset_a
+        self._scan_b = dataset_b
+        self._file_a_edit.setText(str(dataset_a.file_path))
+        self._file_b_edit.setText(str(dataset_b.file_path))
+        self._alignment_result = None
+        alignment_config = self._config.get("alignment", {})
+        try:
+            precomputed = alignment_from_config(alignment_config, logger=self._logger)
+        except Exception as exc:
+            self._logger.exception("Failed to load alignment from config: %s", exc)
+            precomputed = None
+        mismatch = self._scans_mismatch()
+        if mismatch and bool(alignment_config.get("auto_launch_on_mismatch", True)):
+            self._logger.warning("Scan grids mismatch; launching registration tool.")
+            self._alignment_result = self._open_registration(initial_alignment=precomputed)
+            if self._alignment_result is None:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Alignment required",
+                    "Alignment is required before comparison can proceed.",
+                )
+                self._reset_display()
+                return
+        else:
+            self._alignment_result = precomputed
+            if mismatch and self._alignment_result is None:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Alignment required",
+                    "Alignment is required before comparison can proceed.",
+                )
+                self._reset_display()
+                return
+        self._engine = ComparisonEngine(
+            self._scan_a,
+            self._scan_b,
+            self._config,
+            logger=self._logger,
+            alignment=self._alignment_result,
+        )
+        if self._alignment_result is not None:
+            self._logger.info(
+                "Alignment active: rotation=%.3f deg, translation=(%.3f, %.3f)",
+                self._alignment_result.rotation_deg,
+                self._alignment_result.translation[0],
+                self._alignment_result.translation[1],
+            )
         self._populate_map_fields()
         self._select_pattern_field()
         self._update_maps()
@@ -217,6 +350,111 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Missing files", "Select both scans.")
             return
         self.load_scans(Path(self._file_a_edit.text()), Path(self._file_b_edit.text()))
+
+    def _close_scans(self) -> None:
+        """Close any open scan readers.
+
+        Returns:
+            None.
+        """
+
+        if self._scan_a is not None:
+            self._scan_a.close()
+        if self._scan_b is not None:
+            self._scan_b.close()
+        self._scan_a = None
+        self._scan_b = None
+        self._engine = None
+        self._reset_display()
+
+    def _reset_display(self) -> None:
+        """Reset GUI panels to an empty state.
+
+        Returns:
+            None.
+        """
+
+        blank = np.zeros((1, 1))
+        self._map_canvas_a.update_data(blank)
+        self._map_canvas_b.update_data(blank)
+        self._map_canvas_d.update_data(blank)
+        self._pattern_canvas_a.update_data(blank, cmap="gray")
+        self._pattern_canvas_b.update_data(blank, cmap="gray")
+        self._pattern_canvas_d.update_data(blank, cmap="gray")
+        self._map_field_combo.clear()
+        self._probe_table.setRowCount(0)
+        self._pattern_group.setVisible(False)
+
+    def _scans_mismatch(self) -> bool:
+        """Return True if scan grids differ.
+
+        Returns:
+            True if grid shapes differ, otherwise False.
+        """
+
+        if self._scan_a is None or self._scan_b is None:
+            return False
+        return self._scan_a.nx != self._scan_b.nx or self._scan_a.ny != self._scan_b.ny
+
+    def _open_registration(
+        self, initial_alignment: Optional[AlignmentResult] = None
+    ) -> Optional[AlignmentResult]:
+        """Open the registration dialog and return the alignment result.
+
+        Parameters:
+            initial_alignment: Optional alignment to preload.
+
+        Returns:
+            AlignmentResult or None if cancelled.
+        """
+
+        if self._scan_a is None or self._scan_b is None:
+            return None
+        dialog = RegistrationDialog(
+            self._scan_a,
+            self._scan_b,
+            self._config,
+            logger=self._logger,
+            parent=self,
+            initial_alignment=initial_alignment,
+        )
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            return dialog.alignment_result()
+        return None
+
+    def _open_registration_from_button(self) -> None:
+        """Open the registration dialog and apply the result.
+
+        Returns:
+            None.
+        """
+
+        if self._scan_a is None or self._scan_b is None:
+            QtWidgets.QMessageBox.warning(
+                self, "No scans", "Load scans before opening registration."
+            )
+            return
+        alignment = self._open_registration(initial_alignment=self._alignment_result)
+        if alignment is None:
+            return
+        self._alignment_result = alignment
+        if self._engine is None:
+            self._engine = ComparisonEngine(
+                self._scan_a,
+                self._scan_b,
+                self._config,
+                logger=self._logger,
+                alignment=alignment,
+            )
+            self._populate_map_fields()
+            self._select_pattern_field()
+        else:
+            self._engine.set_alignment(alignment)
+        self._update_maps()
+        x, y = self._engine.default_probe_xy()
+        self._update_probe(x, y)
+        self._logger.info("Alignment applied via registration dialog.")
+        self.statusBar().showMessage("Alignment applied.", 5000)
 
     def _populate_map_fields(self) -> None:
         """Populate the map field dropdown."""
@@ -334,6 +572,11 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         if not pattern_triplet or pattern_triplet["A"] is None:
             return
         self._pattern_canvas_a.update_data(pattern_triplet["A"], cmap="gray")
+        if pattern_triplet["B"] is None or pattern_triplet["D"] is None:
+            placeholder = np.zeros_like(pattern_triplet["A"])
+            self._pattern_canvas_b.update_data(placeholder, cmap="gray")
+            self._pattern_canvas_d.update_data(placeholder, cmap="gray")
+            return
         self._pattern_canvas_b.update_data(pattern_triplet["B"], cmap="gray")
         self._pattern_canvas_d.update_data(pattern_triplet["D"], cmap="gray")
 
@@ -376,7 +619,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging.",
+        help="Enable debug logging and load simulated scans if paths are omitted.",
     )
     return parser
 
@@ -385,12 +628,18 @@ def main() -> None:
     """Run the EBSD compare GUI."""
 
     args = build_arg_parser().parse_args()
-    configure_logging(args.debug)
+    config = load_yaml_config(args.config).get("ebsd_compare", {})
+    configure_logging(args.debug, config.get("logging"))
+    logger = logging.getLogger(__name__)
     app = QtWidgets.QApplication([])
     window = EbsdCompareMainWindow(args.config)
     window.show()
     if args.scan_a and args.scan_b:
         window.load_scans(args.scan_a, args.scan_b)
+    elif args.debug:
+        factory = SimulatedScanFactory.from_config(config.get("debug", {}), logger)
+        scan_a, scan_b = factory.create_pair()
+        window.load_scan_datasets(scan_a, scan_b)
     app.exec()
 
 

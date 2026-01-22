@@ -168,7 +168,8 @@ def main() -> None:
     """Run the demo, capture a screenshot, and exit."""
 
     args = build_arg_parser().parse_args()
-    configure_logging(args.debug)
+    config = load_yaml_config(args.config)
+    configure_logging(args.debug, config.get("ebsd_compare", {}).get("logging"))
     logger = logging.getLogger(__name__)
     _ensure_offscreen(logger)
     _require_qt_dependencies(logger)
