@@ -26,6 +26,22 @@ python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window \
 
 After loading both scans, the GUI automatically probes the middle pixel to populate the probe table and patterns panel.
 
+The GUI uses a compact three-row control strip (file paths, display/coordinate controls, and auto-scan/status) so the map and pattern viewers remain dominant.
+
+### Selection + auto-scan
+
+- Coordinate convention: **X = column**, **Y = row** (zero-based indices).
+- You can click any map or type X/Y in the always-visible inputs. Press Enter or tab out to update the selection.
+- The auto-scan controls play a raster animation from `(0, 0)` across X, then Y, updating patterns live.
+- Use the Speed control (milliseconds per step) to slow down or speed up the raster.
+
+### Map + pattern controls
+
+- Each map preview includes Home/Zoom/Pan controls; zooming or panning one map syncs the other two.
+- Map previews render in grayscale with per-map contrast percentiles (low/high) for brightness/contrast tuning.
+- Pattern panels include Home/Zoom/Pan controls and stay synchronized while inspecting patterns.
+- The top controls are compact to keep the map and pattern viewers dominant, with toolbars embedded inside each viewer.
+
 ### Registration + alignment
 
 If the scans do not share the same grid shape, the GUI launches a registration dialog. The registration tool is designed for research-grade alignment workflows and includes:
@@ -42,7 +58,7 @@ Once alignment is accepted, all downstream comparisons use the aligned scan B da
 
 ## Logging
 
-The GUI includes a log panel at the bottom of the main window. All intermediate results, warnings, and alignment diagnostics are logged via the standard `logging` package and streamed to the panel.
+The GUI includes a log console docked at the bottom of the main window. Logs are timestamped and leveled, include colored icons, and can be filtered by level. Use auto-scroll to follow live updates, Clear Logs to reset the view, and Copy Selected/Copy All to share logs in bug reports.
 
 ## Debug mode
 
@@ -92,5 +108,6 @@ See `configs/ebsd_compare_config.yml` for:
 - `field_aliases` for alternate dataset names
 - `alignment.*` for registration/warping configuration, control points, and saved alignment paths
 - `logging.*` for GUI log level, format, and file logging
+- `auto_scan.delay_ms`, `auto_scan.min_delay_ms`, `auto_scan.max_delay_ms` for auto-scan playback speed limits
 - `debug.*` for simulated data parameters
 - `noisy_generation` and `demo` sections used by scripts

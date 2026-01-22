@@ -48,6 +48,10 @@ ebsd_compare:
     gui_max_lines: 1000
     format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file_path: null
+  auto_scan:
+    delay_ms: 200
+    min_delay_ms: 25
+    max_delay_ms: 2000
   debug:
     nx: 24
     ny: 24

@@ -234,10 +234,11 @@ class RegistrationDialog(QtWidgets.QDialog):
         return self._alignment_result
 
     def _init_ui(self) -> None:
-        """Initialize the registration UI widgets."""
+        """Initialize the registration UI widgets.
 
         Returns:
             None.
+        """
 
         self.setWindowTitle("EBSD Registration")
         layout = QtWidgets.QVBoxLayout(self)
@@ -246,16 +247,27 @@ class RegistrationDialog(QtWidgets.QDialog):
         header_layout.addWidget(QtWidgets.QLabel("Registration Field"))
         self._field_combo = QtWidgets.QComboBox()
         self._field_combo.currentTextChanged.connect(self._update_maps)
+        self._field_combo.setToolTip(
+            "Scalar field used for registration. Default from config. Example: IQ."
+        )
         header_layout.addWidget(self._field_combo)
         self._link_contrast_checkbox = QtWidgets.QCheckBox("Link Contrast")
-        self._link_contrast_checkbox.setChecked(
-            bool(self._alignment_config.get("contrast", {}).get("link_maps", True))
+        link_contrast_default = bool(
+            self._alignment_config.get("contrast", {}).get("link_maps", True)
         )
+        self._link_contrast_checkbox.setChecked(link_contrast_default)
         self._link_contrast_checkbox.stateChanged.connect(self._update_maps)
+        self._link_contrast_checkbox.setToolTip(
+            f"Use the same contrast limits for both maps. Default: "
+            f"{'on' if link_contrast_default else 'off'}."
+        )
         header_layout.addWidget(self._link_contrast_checkbox)
         self._link_view_checkbox = QtWidgets.QCheckBox("Link View")
-        self._link_view_checkbox.setChecked(
-            bool(self._alignment_config.get("link_view", True))
+        link_view_default = bool(self._alignment_config.get("link_view", True))
+        self._link_view_checkbox.setChecked(link_view_default)
+        self._link_view_checkbox.setToolTip(
+            f"Synchronize zoom and pan between the two maps. Default: "
+            f"{'on' if link_view_default else 'off'}."
         )
         header_layout.addWidget(self._link_view_checkbox)
         header_layout.addStretch(1)
@@ -266,6 +278,12 @@ class RegistrationDialog(QtWidgets.QDialog):
         self._canvas_b = RegistrationMapCanvas("Scan B")
         self._canvas_a.connect_click(self._on_click_a)
         self._canvas_b.connect_click(self._on_click_b)
+        self._canvas_a.setToolTip(
+            "Click to pick a control point in scan A."
+        )
+        self._canvas_b.setToolTip(
+            "Click to pick a matching control point in scan B."
+        )
         self._canvas_a.axes.callbacks.connect("xlim_changed", self._sync_view_from_a)
         self._canvas_a.axes.callbacks.connect("ylim_changed", self._sync_view_from_a)
         self._canvas_b.axes.callbacks.connect("xlim_changed", self._sync_view_from_b)
@@ -279,6 +297,8 @@ class RegistrationDialog(QtWidgets.QDialog):
         self._coord_a.setReadOnly(True)
         self._coord_b = QtWidgets.QLineEdit()
         self._coord_b.setReadOnly(True)
+        self._coord_a.setToolTip("Selected coordinate in scan A. Example: (10.0, 5.0).")
+        self._coord_b.setToolTip("Selected coordinate in scan B. Example: (10.0, 5.0).")
         coord_layout.addWidget(QtWidgets.QLabel("Selected A"))
         coord_layout.addWidget(self._coord_a)
         coord_layout.addWidget(QtWidgets.QLabel("Selected B"))
@@ -296,8 +316,18 @@ class RegistrationDialog(QtWidgets.QDialog):
         self._contrast_high.setDecimals(1)
         self._contrast_high.setSingleStep(0.5)
         contrast_config = self._alignment_config.get("contrast", {})
-        self._contrast_low.setValue(float(contrast_config.get("low_percentile", 2.0)))
-        self._contrast_high.setValue(float(contrast_config.get("high_percentile", 98.0)))
+        low_default = float(contrast_config.get("low_percentile", 2.0))
+        high_default = float(contrast_config.get("high_percentile", 98.0))
+        self._contrast_low.setValue(low_default)
+        self._contrast_high.setValue(high_default)
+        self._contrast_low.setToolTip(
+            f"Low percentile for contrast clipping (0-100). Default: {low_default}. "
+            "Example: 2.0."
+        )
+        self._contrast_high.setToolTip(
+            f"High percentile for contrast clipping (0-100). Default: {high_default}. "
+            "Example: 98.0."
+        )
         self._contrast_low.valueChanged.connect(self._update_maps)
         self._contrast_high.valueChanged.connect(self._update_maps)
         contrast_layout.addWidget(self._contrast_low)
@@ -312,6 +342,9 @@ class RegistrationDialog(QtWidgets.QDialog):
             ["ID", "Ax", "Ay", "Bx", "By", "Inlier", "Residual"]
         )
         self._point_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._point_table.setToolTip(
+            "Control point pairs. Select a row to edit or delete."
+        )
         self._point_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.Stretch
         )
@@ -327,6 +360,26 @@ class RegistrationDialog(QtWidgets.QDialog):
         self._edit_bx.setDecimals(2)
         self._edit_by = QtWidgets.QDoubleSpinBox()
         self._edit_by.setDecimals(2)
+        self._edit_ax.setRange(0.0, float(self._scan_a.nx - 1))
+        self._edit_ay.setRange(0.0, float(self._scan_a.ny - 1))
+        self._edit_bx.setRange(0.0, float(self._scan_b.nx - 1))
+        self._edit_by.setRange(0.0, float(self._scan_b.ny - 1))
+        self._edit_ax.setToolTip(
+            f"Edit the X coordinate for scan A. Range: 0-{self._scan_a.nx - 1}. "
+            "Example: 10."
+        )
+        self._edit_ay.setToolTip(
+            f"Edit the Y coordinate for scan A. Range: 0-{self._scan_a.ny - 1}. "
+            "Example: 10."
+        )
+        self._edit_bx.setToolTip(
+            f"Edit the X coordinate for scan B. Range: 0-{self._scan_b.nx - 1}. "
+            "Example: 10."
+        )
+        self._edit_by.setToolTip(
+            f"Edit the Y coordinate for scan B. Range: 0-{self._scan_b.ny - 1}. "
+            "Example: 10."
+        )
         for widget in (self._edit_ax, self._edit_ay, self._edit_bx, self._edit_by):
             widget.valueChanged.connect(self._on_edit_change)
         edit_layout.addWidget(QtWidgets.QLabel("A.x"))
@@ -346,17 +399,29 @@ class RegistrationDialog(QtWidgets.QDialog):
         self._ransac_min_samples = QtWidgets.QSpinBox()
         self._ransac_min_samples.setRange(2, 20)
         self._ransac_min_samples.setValue(self._settings.ransac_min_samples)
+        self._ransac_min_samples.setToolTip(
+            f"Minimum number of point pairs for RANSAC (2-20). "
+            f"Default: {self._settings.ransac_min_samples}."
+        )
         ransac_layout.addWidget(self._ransac_min_samples)
         ransac_layout.addWidget(QtWidgets.QLabel("Residual threshold"))
         self._ransac_threshold = QtWidgets.QDoubleSpinBox()
         self._ransac_threshold.setRange(0.1, 50.0)
         self._ransac_threshold.setDecimals(2)
         self._ransac_threshold.setValue(self._settings.ransac_residual_threshold)
+        self._ransac_threshold.setToolTip(
+            f"RANSAC inlier threshold in pixels. Default: "
+            f"{self._settings.ransac_residual_threshold}. Example: 2.0."
+        )
         ransac_layout.addWidget(self._ransac_threshold)
         ransac_layout.addWidget(QtWidgets.QLabel("Max trials"))
         self._ransac_trials = QtWidgets.QSpinBox()
         self._ransac_trials.setRange(100, 10000)
         self._ransac_trials.setValue(self._settings.ransac_max_trials)
+        self._ransac_trials.setToolTip(
+            f"Maximum RANSAC iterations. Default: {self._settings.ransac_max_trials}. "
+            "Example: 2000."
+        )
         ransac_layout.addWidget(self._ransac_trials)
         ransac_layout.addStretch(1)
         layout.addLayout(ransac_layout)
@@ -369,21 +434,27 @@ class RegistrationDialog(QtWidgets.QDialog):
         action_layout.addStretch(1)
         self._undo_button = QtWidgets.QPushButton("Undo Last")
         self._undo_button.clicked.connect(self._undo_last_point)
+        self._undo_button.setToolTip("Remove the most recently added point pair.")
         action_layout.addWidget(self._undo_button)
         self._delete_button = QtWidgets.QPushButton("Delete Selected")
         self._delete_button.clicked.connect(self._delete_selected_point)
+        self._delete_button.setToolTip("Delete the selected point pair.")
         action_layout.addWidget(self._delete_button)
         self._clear_button = QtWidgets.QPushButton("Clear All")
         self._clear_button.clicked.connect(self._clear_points)
+        self._clear_button.setToolTip("Remove all point pairs.")
         action_layout.addWidget(self._clear_button)
         self._compute_button = QtWidgets.QPushButton("Compute Alignment")
         self._compute_button.clicked.connect(self._compute_alignment)
+        self._compute_button.setToolTip("Compute alignment using current point pairs.")
         action_layout.addWidget(self._compute_button)
         self._apply_button = QtWidgets.QPushButton("Apply Alignment")
         self._apply_button.clicked.connect(self._apply_alignment)
+        self._apply_button.setToolTip("Accept the computed alignment and return.")
         action_layout.addWidget(self._apply_button)
         self._cancel_button = QtWidgets.QPushButton("Cancel")
         self._cancel_button.clicked.connect(self.reject)
+        self._cancel_button.setToolTip("Close without applying alignment.")
         action_layout.addWidget(self._cancel_button)
         layout.addLayout(action_layout)
 
