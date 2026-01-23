@@ -1,0 +1,6 @@
+#define AppName "EBSD Scan Comparator"
+#define AppVersion "1.0.0"
+#define AppPublisher "KikuchiBandAnalyzer"
+#define AppURL "https://github.com/kvmani/kikuchiBandAnalyzer"
+#define AppExeName "EBSD_Scan_Comparator.exe"
+#define AppId "{FB48909A-2AFD-4403-93F9-12A76104BE2E}"

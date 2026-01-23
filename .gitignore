@@ -5,3 +5,7 @@ tmp/
 debug_artifacts/
 testData/*_noisy.oh5
 .venv/
+.venv-build/
+build/
+dist/
+packaging/version_info.txt

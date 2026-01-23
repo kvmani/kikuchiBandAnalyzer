@@ -109,6 +109,12 @@ pytest -q
 
 Note: generated demo artifacts (noisy OH5 and GUI screenshots) are created locally and are not committed.
 
+## Windows installer (EBSD Scan Comparator)
+
+To build a professional Windows installer (single setup EXE that bundles the GUI and dependencies), follow the step-by-step guide:
+
+- `docs/windows_installer_guide.md`
+
 ## Repository layout (high level)
 
 - `KikuchiBandWidthAutomator.py`: end‑to‑end batch pipeline (YAML‑driven)
