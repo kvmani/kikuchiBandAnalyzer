@@ -1913,6 +1913,7 @@ def main() -> None:
     configure_logging(args.debug, config.get("logging"))
     logger = logging.getLogger(__name__)
     app = QtWidgets.QApplication([])
+    apply_input_border_styles(app)
     window = EbsdCompareMainWindow(args.config)
     window.show()
     if args.scan_a and args.scan_b:
@@ -1922,6 +1923,37 @@ def main() -> None:
         scan_a, scan_b = factory.create_pair()
         window.load_scan_datasets(scan_a, scan_b)
     app.exec()
+
+
+def apply_input_border_styles(app: QtWidgets.QApplication) -> None:
+    """Apply a minimal stylesheet to keep input borders visible on dark themes.
+
+    Parameters:
+        app: Application instance to style.
+
+    Returns:
+        None.
+    """
+
+    app.setStyleSheet(
+        """
+        QLineEdit,
+        QComboBox,
+        QSpinBox,
+        QDoubleSpinBox,
+        QAbstractSpinBox {
+            border: 1px solid #8a8a8a;
+            border-radius: 2px;
+        }
+        QLineEdit:focus,
+        QComboBox:focus,
+        QSpinBox:focus,
+        QDoubleSpinBox:focus,
+        QAbstractSpinBox:focus {
+            border: 1px solid #4a90e2;
+        }
+        """
+    )
 
 
 if __name__ == "__main__":
