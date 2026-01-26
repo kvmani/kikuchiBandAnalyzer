@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
+from kikuchiBandAnalyzer.ebsd_compare.field_selection import resolve_scalar_fields
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
 from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import alignment_from_config
 from kikuchiBandAnalyzer.ebsd_compare.simulated import SimulatedScanFactory
@@ -68,9 +69,15 @@ class CompareExporter:
             dataset_a, dataset_b, self._config, self._logger, alignment=alignment
         )
         mode = self._config.get("display", {}).get("map_diff_mode", "delta")
-        scalar_fields = self._config.get("compare_fields", {}).get("scalars", [])
+        scalar_fields, _ = resolve_scalar_fields(
+            self._config,
+            dataset_a.catalog,
+            dataset_b.catalog,
+            logger=self._logger,
+        )
         if not scalar_fields:
-            scalar_fields = engine.available_scalar_fields()
+            self._logger.warning("No scalar fields available for export.")
+            return
         for field in scalar_fields:
             maps = engine.map_triplet(field, mode)
             self._export_map_triplet(output_dir, field, maps)

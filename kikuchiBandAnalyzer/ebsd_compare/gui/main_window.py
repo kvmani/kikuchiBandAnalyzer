@@ -6,7 +6,7 @@ import argparse
 from functools import partial
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib
 import numpy as np
@@ -18,6 +18,11 @@ from matplotlib.figure import Figure
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
+from kikuchiBandAnalyzer.ebsd_compare.field_selection import (
+    resolve_pattern_fields,
+    resolve_scalar_fields,
+    resolve_sync_navigation,
+)
 from kikuchiBandAnalyzer.ebsd_compare.gui.auto_scan import AutoScanController
 from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import (
     GuiLogHandler,
@@ -96,6 +101,7 @@ class MapCanvas(FigureCanvas):
         self._marker_coords: Optional[Tuple[int, int]] = None
         self._marker_artist = None
         self._marker_color = "#ffdd00"
+        self._reset_callbacks: List[Callable[[MapCanvas], None]] = []
         self._axes.set_title(title)
         self._axes.set_xticks([])
         self._axes.set_yticks([])
@@ -141,6 +147,7 @@ class MapCanvas(FigureCanvas):
             self._marker_artist = None
             if self._marker_coords is not None:
                 self._draw_marker()
+            self._notify_reset()
         else:
             self._image.set_data(data)
             self._image.set_cmap(cmap)
@@ -148,6 +155,15 @@ class MapCanvas(FigureCanvas):
                 self._image.set_clim(vmin=vmin, vmax=vmax)
         self._figure.tight_layout()
         self.draw_idle()
+
+    def add_reset_callback(self, callback: Callable[[MapCanvas], None]) -> None:
+        """Register a callback invoked after axes reset.
+
+        Parameters:
+            callback: Callable accepting the canvas instance.
+        """
+
+        self._reset_callbacks.append(callback)
 
     def connect_click(self, handler: QtCore.Slot) -> None:
         """Connect a click handler to the canvas.
@@ -207,6 +223,16 @@ class MapCanvas(FigureCanvas):
             linewidths=2.0,
             zorder=3,
         )
+
+    def _notify_reset(self) -> None:
+        """Invoke registered reset callbacks.
+
+        Returns:
+            None.
+        """
+
+        for callback in self._reset_callbacks:
+            callback(self)
 
 
 class MapPanel(QtWidgets.QWidget):
@@ -468,6 +494,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._logger = logging.getLogger(__name__)
         self._config_path = config_path
         self._config = load_yaml_config(config_path).get("ebsd_compare", {})
+        self._sync_navigation = resolve_sync_navigation(self._config)
         self._scan_a = None
         self._scan_b = None
         self._engine: Optional[ComparisonEngine] = None
@@ -482,9 +509,13 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._syncing_coords = False
         self._syncing_map_view = False
         self._syncing_pattern_view = False
+        self._map_view_sync_cids: Dict[MapCanvas, List[int]] = {}
+        self._pattern_view_sync_cids: Dict[MapCanvas, List[int]] = {}
         self._map_panels: Dict[str, MapPanel] = {}
         self._pattern_panels: Dict[str, PatternPanel] = {}
         self._map_triplet: Optional[Dict[str, np.ndarray]] = None
+        self._resolved_scalar_fields: List[str] = []
+        self._resolved_pattern_fields: List[str] = []
         self._inline_status_label: Optional[QtWidgets.QLabel] = None
         self._inline_error_label: Optional[QtWidgets.QLabel] = None
         self._x_validator: Optional[QtGui.QIntValidator] = None
@@ -686,6 +717,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
             )
             panel.canvas().connect_click(self._on_map_click)
+            panel.canvas().add_reset_callback(self._on_map_canvas_reset)
             panel.canvas().setToolTip(
                 "Click to select a pixel (X=column, Y=row)."
             )
@@ -733,6 +765,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             panel.canvas().setToolTip(
                 "Pattern view. Use the toolbar overlay to zoom/pan (synced)."
             )
+            panel.canvas().add_reset_callback(self._on_pattern_canvas_reset)
         pattern_layout.addWidget(self._pattern_panel_a, stretch=1)
         pattern_layout.addWidget(self._pattern_panel_b, stretch=1)
         pattern_layout.addWidget(self._pattern_panel_d, stretch=1)
@@ -911,10 +944,10 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
                 self._alignment_result.translation[0],
                 self._alignment_result.translation[1],
             )
+        self._resolve_field_selection()
         self._populate_map_fields()
         self._select_pattern_field()
         self._pattern_reset_view = True
-        self._log_missing_fields()
         self._update_maps()
         x, y = self._engine.default_probe_xy()
         self.set_selected_pixel(x, y, source="init")
@@ -1323,28 +1356,49 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(message, 5000)
         self._logger.info(message)
 
-    def _log_missing_fields(self) -> None:
-        """Log warnings for configured fields missing from either scan.
+    def _resolve_field_selection(self) -> None:
+        """Resolve configured field lists and surface missing-field warnings.
 
         Returns:
             None.
         """
 
         if self._scan_a is None or self._scan_b is None:
+            self._resolved_scalar_fields = []
+            self._resolved_pattern_fields = []
             return
-        compare_config = self._config.get("compare_fields", {})
-        scalar_fields = compare_config.get("scalars", [])
-        pattern_fields = compare_config.get("patterns", [])
-        for field in scalar_fields:
-            if field not in self._scan_a.catalog.scalars:
-                self._logger.warning('Field "%s" missing in scan-A; choose another field.', field)
-            if field not in self._scan_b.catalog.scalars:
-                self._logger.warning('Field "%s" missing in scan-B; choose another field.', field)
-        for field in pattern_fields:
-            if field not in self._scan_a.catalog.patterns:
-                self._logger.warning('Pattern field "%s" missing in scan-A; choose another field.', field)
-            if field not in self._scan_b.catalog.patterns:
-                self._logger.warning('Pattern field "%s" missing in scan-B; choose another field.', field)
+        scalar_fields, scalar_warnings = resolve_scalar_fields(
+            self._config,
+            self._scan_a.catalog,
+            self._scan_b.catalog,
+            logger=self._logger,
+        )
+        pattern_fields, pattern_warnings = resolve_pattern_fields(
+            self._config,
+            self._scan_a.catalog,
+            self._scan_b.catalog,
+            logger=self._logger,
+        )
+        self._resolved_scalar_fields = scalar_fields
+        self._resolved_pattern_fields = pattern_fields
+        self._show_field_warnings(scalar_warnings + pattern_warnings)
+
+    def _show_field_warnings(self, warnings: List[str]) -> None:
+        """Display missing-field warnings in the UI.
+
+        Parameters:
+            warnings: Warning messages to surface.
+
+        Returns:
+            None.
+        """
+
+        if not warnings:
+            self._clear_inline_error()
+            return
+        message = warnings[0]
+        self._set_inline_error(message)
+        self.statusBar().showMessage(message, 7000)
 
     def _close_scans(self) -> None:
         """Close any open scan readers.
@@ -1384,6 +1438,8 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._pattern_group.setVisible(False)
         self._map_triplet = None
         self._pattern_reset_view = True
+        self._resolved_scalar_fields = []
+        self._resolved_pattern_fields = []
         self._x_input.setText("")
         self._y_input.setText("")
         self._x_input.setEnabled(False)
@@ -1474,9 +1530,15 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             return
         self._map_field_combo.blockSignals(True)
         self._map_field_combo.clear()
-        fields = self._engine.available_scalar_fields()
+        fields = self._resolved_scalar_fields or self._engine.available_scalar_fields()
+        if not fields:
+            self._map_field_combo.blockSignals(False)
+            self._logger.warning("No scalar fields available for map display.")
+            return
         self._map_field_combo.addItems(fields)
         default_field = self._engine.default_map_field()
+        if default_field not in fields:
+            default_field = fields[0]
         index = self._map_field_combo.findText(default_field)
         if index >= 0:
             self._map_field_combo.setCurrentIndex(index)
@@ -1486,47 +1548,15 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         """Select the first available pattern field from config."""
 
         self._pattern_field = None
-        pattern_config: List[str] = (
-            self._config.get("compare_fields", {}).get("patterns", [])
-        )
         if self._engine is None:
             self._pattern_group.setVisible(False)
             return
-        if not pattern_config:
-            common_patterns = sorted(
-                set(self._scan_a.catalog.patterns.keys())
-                & set(self._scan_b.catalog.patterns.keys())
-            )
-            if common_patterns:
-                self._pattern_field = common_patterns[0]
-                self._pattern_group.setVisible(True)
-                self._logger.info(
-                    'Pattern field not configured; using "%s".', self._pattern_field
-                )
-                return
+        pattern_fields = self._resolved_pattern_fields
+        if not pattern_fields:
             self._pattern_group.setVisible(False)
             return
-        for field in pattern_config:
-            if (
-                field in self._scan_a.catalog.patterns
-                and field in self._scan_b.catalog.patterns
-            ):
-                self._pattern_field = field
-                self._pattern_group.setVisible(True)
-                return
-        common_patterns = sorted(
-            set(self._scan_a.catalog.patterns.keys())
-            & set(self._scan_b.catalog.patterns.keys())
-        )
-        if common_patterns:
-            self._pattern_field = common_patterns[0]
-            self._pattern_group.setVisible(True)
-            self._logger.warning(
-                'Configured pattern fields not found; using "%s" instead.',
-                self._pattern_field,
-            )
-            return
-        self._pattern_group.setVisible(False)
+        self._pattern_field = pattern_fields[0]
+        self._pattern_group.setVisible(True)
 
     def _update_maps(self, *_: object) -> None:
         """Update the map panels based on current selection."""
@@ -1588,7 +1618,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             data, cmap=cmap, vmin=vmin, vmax=vmax, reset_view=reset_view
         )
 
-    def _on_map_contrast_changed(self, key: str) -> None:
+    def _on_map_contrast_changed(self, key: str, *_: object) -> None:
         """Handle contrast control changes for a specific map panel.
 
         Parameters:
@@ -1636,13 +1666,49 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         """
 
         for panel in self._map_panels.values():
+            self._disconnect_map_view_sync(panel.canvas())
+        if not self._sync_navigation:
+            return
+        for panel in self._map_panels.values():
             canvas = panel.canvas()
-            canvas.axes.callbacks.connect(
-                "xlim_changed", partial(self._sync_map_view, canvas)
-            )
-            canvas.axes.callbacks.connect(
-                "ylim_changed", partial(self._sync_map_view, canvas)
-            )
+            cids = [
+                canvas.axes.callbacks.connect(
+                    "xlim_changed", partial(self._sync_map_view, canvas)
+                ),
+                canvas.axes.callbacks.connect(
+                    "ylim_changed", partial(self._sync_map_view, canvas)
+                ),
+            ]
+            self._map_view_sync_cids[canvas] = cids
+
+    def _disconnect_map_view_sync(self, canvas: MapCanvas) -> None:
+        """Disconnect map view synchronization callbacks for a canvas.
+
+        Parameters:
+            canvas: Map canvas to disconnect.
+
+        Returns:
+            None.
+        """
+
+        cids = self._map_view_sync_cids.pop(canvas, [])
+        for cid in cids:
+            try:
+                canvas.axes.callbacks.disconnect(cid)
+            except Exception:
+                continue
+
+    def _on_map_canvas_reset(self, _: MapCanvas) -> None:
+        """Reconnect map view sync after a canvas reset.
+
+        Parameters:
+            _: Canvas that triggered the reset.
+
+        Returns:
+            None.
+        """
+
+        self._connect_map_view_sync()
 
     def _sync_map_view(self, source: MapCanvas, *_: object) -> None:
         """Synchronize map view limits across all panels.
@@ -1654,7 +1720,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             None.
         """
 
-        if self._syncing_map_view:
+        if not self._sync_navigation or self._syncing_map_view:
             return
         self._syncing_map_view = True
         try:
@@ -1678,13 +1744,49 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         """
 
         for panel in self._pattern_panels.values():
+            self._disconnect_pattern_view_sync(panel.canvas())
+        if not self._sync_navigation:
+            return
+        for panel in self._pattern_panels.values():
             canvas = panel.canvas()
-            canvas.axes.callbacks.connect(
-                "xlim_changed", partial(self._sync_pattern_view, canvas)
-            )
-            canvas.axes.callbacks.connect(
-                "ylim_changed", partial(self._sync_pattern_view, canvas)
-            )
+            cids = [
+                canvas.axes.callbacks.connect(
+                    "xlim_changed", partial(self._sync_pattern_view, canvas)
+                ),
+                canvas.axes.callbacks.connect(
+                    "ylim_changed", partial(self._sync_pattern_view, canvas)
+                ),
+            ]
+            self._pattern_view_sync_cids[canvas] = cids
+
+    def _disconnect_pattern_view_sync(self, canvas: MapCanvas) -> None:
+        """Disconnect pattern view synchronization callbacks for a canvas.
+
+        Parameters:
+            canvas: Pattern canvas to disconnect.
+
+        Returns:
+            None.
+        """
+
+        cids = self._pattern_view_sync_cids.pop(canvas, [])
+        for cid in cids:
+            try:
+                canvas.axes.callbacks.disconnect(cid)
+            except Exception:
+                continue
+
+    def _on_pattern_canvas_reset(self, _: MapCanvas) -> None:
+        """Reconnect pattern view sync after a canvas reset.
+
+        Parameters:
+            _: Canvas that triggered the reset.
+
+        Returns:
+            None.
+        """
+
+        self._connect_pattern_view_sync()
 
     def _sync_pattern_view(self, source: MapCanvas, *_: object) -> None:
         """Synchronize pattern view limits across all panels.
@@ -1696,7 +1798,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             None.
         """
 
-        if self._syncing_pattern_view:
+        if not self._sync_navigation or self._syncing_pattern_view:
             return
         self._syncing_pattern_view = True
         try:
@@ -1737,11 +1839,10 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
 
         if self._engine is None:
             return
-        scalar_fields = (
-            self._config.get("compare_fields", {}).get("scalars", [])
-        )
+        scalar_fields = self._resolved_scalar_fields or self._engine.available_scalar_fields()
         if not scalar_fields:
-            scalar_fields = self._engine.available_scalar_fields()
+            self._probe_table.setRowCount(0)
+            return
         probe = self._engine.probe_scalars(x, y, scalar_fields)
         self._probe_table.setRowCount(len(probe.fields))
         for row, (field, values) in enumerate(probe.fields.items()):

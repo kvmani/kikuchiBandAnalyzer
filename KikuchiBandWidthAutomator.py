@@ -31,6 +31,7 @@ from kikuchiBandWidthDetector import KikuchiBatchProcessor
 import shutil
 import h5py
 import utilities as ut
+from kikuchiBandAnalyzer.derived_fields import build_default_registry, write_hdf5_dataset
 from simulators import (
     make_text_marker,
     CustomGeometricalKikuchiPatternSimulation,
@@ -246,18 +247,31 @@ class BandWidthAutomator:
                 Fit=eff_ratio_array,
             )
 
-            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/Band_Width", data=band_width_array)
-            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/psnr", data=psnr_array)
-            h5file.create_dataset(
-                f"/{target_dataset_name}/EBSD/Data/efficientlineIntensity",
-                data=efficientIntensity_array,
+            base_outputs = {
+                "Band_Width": band_width_array,
+                "psnr": psnr_array,
+                "efficientlineIntensity": efficientIntensity_array,
+                "defficientlineIntensity": defficientIntensity_array,
+                "band_intensity_ratio": eff_ratio_array,
+                "strain": band_strain_array,
+                "stress": band_stress_array,
+            }
+            registry = build_default_registry(logger=logging.getLogger(__name__))
+            derived_outputs = registry.compute(base_outputs)
+            data_root = f"/{target_dataset_name}/EBSD/Data"
+            for field_name, data in base_outputs.items():
+                write_hdf5_dataset(h5file, f"{data_root}/{field_name}", data)
+            for field_name, data in derived_outputs.items():
+                spec = registry.get_spec(field_name)
+                dataset_name = spec.dataset_name if spec is not None else field_name
+                attrs = spec.attrs if spec is not None else None
+                write_hdf5_dataset(
+                    h5file, f"{data_root}/{dataset_name}", data, attrs=attrs
+                )
+            logging.info(
+                "Wrote HDF5 outputs: %s.",
+                ", ".join(list(base_outputs.keys()) + list(derived_outputs.keys())),
             )
-            h5file.create_dataset(
-                f"/{target_dataset_name}/EBSD/Data/defficientlineIntensity",
-                data=defficientIntensity_array,
-            )
-            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/strain", data=band_strain_array)
-            h5file.create_dataset(f"/{target_dataset_name}/EBSD/Data/stress", data=band_stress_array)
 
             logging.info(
                 "Wrote Band_Width, strain, stress, psnr, efficient/defficient intensity to HDF5."

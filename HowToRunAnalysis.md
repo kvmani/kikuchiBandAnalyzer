@@ -257,6 +257,16 @@ Given an input `.../sample_AI_modified.h5`, the automator writes outputs next to
 - One or more derived `.ang` files with new columns appended:
   - `sample_AI_modified_modified_<suffix>.ang`
 
+Derived HDF5 datasets written under `/<scan_name>/EBSD/Data/` include:
+- `Band_Width`
+- `psnr`
+- `efficientlineIntensity`
+- `defficientlineIntensity`
+- `band_intensity_ratio`
+- `band_intensity_diff_norm`
+- `strain`
+- `stress`
+
 ## Troubleshooting (common beginner issues)
 
 - **Nothing happens / script can’t import packages**: PyCharm interpreter is wrong or dependencies aren’t installed; re-check Part 0.2 and Part 0.3.

@@ -2,6 +2,13 @@
 
 This package provides a field-discovery-driven comparator for EBSD scans stored in `.oh5` (HDF5) files. It discovers scalar maps and pattern stacks under `/<scan>/EBSD/Data/`, supports lazy pattern loading, and uses a YAML configuration to drive probe panel contents, diff modes, and alignment workflows.
 
+## Release 1.0.0 highlights
+
+- YAML `fields` list enables comparison of any scalar map (not just IQ/CI).
+- Missing fields are skipped with warnings in both logs and the GUI.
+- Linked pan/zoom is controlled via `sync_navigation`.
+- Map contrast controls update reliably across all panels.
+
 ## Field discovery
 
 - The reader locates the first top-level scan group that is **not** `Manufacturer` or `Version`.
@@ -37,9 +44,9 @@ The GUI uses a compact three-row control strip (file paths, display/coordinate c
 
 ### Map + pattern controls
 
-- Each map preview includes Home/Zoom/Pan controls; zooming or panning one map syncs the other two.
+- Each map preview includes Home/Zoom/Pan controls; zooming or panning one map syncs the other two when `sync_navigation` is enabled.
 - Map previews render in grayscale with per-map contrast percentiles (low/high) for brightness/contrast tuning.
-- Pattern panels include Home/Zoom/Pan controls and stay synchronized while inspecting patterns.
+- Pattern panels include Home/Zoom/Pan controls and stay synchronized while inspecting patterns when `sync_navigation` is enabled.
 - The top controls are compact to keep the map and pattern viewers dominant, with toolbars embedded inside each viewer.
 
 ### Registration + alignment
@@ -103,11 +110,33 @@ The demo script generates the noisy file (if needed), launches the GUI, auto-loa
 See `configs/ebsd_compare_config.yml` for:
 
 - `default_map_field`
-- `compare_fields.scalars` and `compare_fields.patterns`
+- `fields` (preferred scalar field list) or `compare_fields.scalars` (legacy)
+- `compare_fields.patterns`
 - `display.map_diff_mode` and `display.pattern_diff_mode`
 - `field_aliases` for alternate dataset names
+- `sync_navigation` to toggle linked pan/zoom across correlated viewers
 - `alignment.*` for registration/warping configuration, control points, and saved alignment paths
 - `logging.*` for GUI log level, format, and file logging
 - `auto_scan.delay_ms`, `auto_scan.min_delay_ms`, `auto_scan.max_delay_ms` for auto-scan playback speed limits
 - `debug.*` for simulated data parameters
 - `noisy_generation` and `demo` sections used by scripts
+
+If a configured field is missing in a scan, the GUI logs a warning, shows a UI warning, and skips that field. When none of the configured fields are present, the GUI falls back to all common scalar fields.
+
+Example scalar field selection:
+
+```yaml
+ebsd_compare:
+  default_map_field: IQ
+  fields:
+    - IQ
+    - CI
+    - Band_Width
+    - psnr
+    - band_intensity_ratio
+    - band_intensity_diff_norm
+  sync_navigation: true
+  compare_fields:
+    patterns:
+      - Pattern
+```

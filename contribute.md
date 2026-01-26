@@ -11,3 +11,5 @@
      non-interactively.
 - Update all documentation, including README.md, whenever the code or
   configuration changes.
+- When cutting a release, update `VERSION` and append release notes to
+  `CHANGELOG.md`.

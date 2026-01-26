@@ -1,9 +1,14 @@
 ebsd_compare:
   default_map_field: IQ
+  fields:
+    - IQ
+    - CI
+    - Band_Width
+    - psnr
+    - band_intensity_ratio
+    - band_intensity_diff_norm
+  sync_navigation: true
   compare_fields:
-    scalars:
-      - IQ
-      - CI
     patterns:
       - Pattern
   display:

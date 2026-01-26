@@ -25,6 +25,15 @@ This repo also contains utilities for exporting EBSD patterns to images (useful 
 
 By default the script uses `bandDetectorOptionsHcp.yml`, which points to `testData/Test_Ti.oh5` and `testData/Test_Ti.ang`.
 
+## Release 1.0.0
+
+### What is new in this release
+
+- Derived field registry with normalized band intensity difference (`band_intensity_diff_norm`) and HDF5 outputs for `band_intensity_ratio`.
+- EBSD Comparator now supports YAML-driven scalar field lists via `fields`, with graceful missing-field warnings.
+- Linked pan/zoom toggled by `sync_navigation`, plus reliable contrast updates across map panels.
+- Shared versioning metadata with `VERSION`, `CHANGELOG.md`, and packaging hooks for the Windows installer.
+
 ## Run on your own data
 
 ### 1) Prepare input files
@@ -76,13 +85,17 @@ For an input file `<stem>.oh5`/`<stem>.h5`, the pipeline writes outputs next to 
   - `<stem>_filtered_band_data.csv`
 - An augmented HDF5 copy:
   - `<stem>_modified.h5`
-  - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `strain`, `stress`, …).
+  - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `band_intensity_ratio`, `band_intensity_diff_norm`, `strain`, `stress`, …).
 - Derived `.ang` files with additional columns:
   - `<stem>_modified_<suffix>.ang`
 
 Notes:
 - The pipeline does not overwrite your original `.oh5`/`.h5`; it works on copies.
 - If your input is `.oh5`, the code may create an intermediate `.h5` copy with the same stem for processing.
+
+Derived field definitions:
+- `band_intensity_ratio = I_eff / I_def`
+- `band_intensity_diff_norm = 2*(I_eff - I_def)/(I_eff + I_def)`; values are set to NaN when `I_eff + I_def` is near zero.
 
 ## Optional: CycleGAN / ML preprocessing workflow
 
@@ -95,7 +108,7 @@ If you run a CycleGAN (or other model) to enhance patterns before band‑width a
 
 ## EBSD Compare GUI (v2)
 
-This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
+This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. Use the `fields` list in the YAML config to select which scalar maps to compare, and `sync_navigation` to toggle linked pan/zoom. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
 
 Common commands:
 
@@ -115,12 +128,21 @@ To build a professional Windows installer (single setup EXE that bundles the GUI
 
 - `docs/windows_installer_guide.md`
 
+## Versioning and releases
+
+- Current version is stored in `VERSION` and mirrored in `app_metadata.py` at build time.
+- Python API exposes `kikuchiBandAnalyzer.__version__` when the `VERSION` file is present.
+- Release notes live in `CHANGELOG.md` (append a new section when you bump the version).
+- Windows packaging pulls the version via `packaging/generate_installer_vars.py` and `packaging/ebsd_gui.spec`.
+
 ## Repository layout (high level)
 
 - `KikuchiBandWidthAutomator.py`: end‑to‑end batch pipeline (YAML‑driven)
 - `kikuchiBandWidthDetector.py`: per‑pattern detection + batch processing
 - `hdf5_image_export_and_validation.py`: export/reconstruct patterns for ML workflows
 - `bandDetectorOptions*.yml`: example configuration files
+- `VERSION`: single source of truth for the repo version
+- `CHANGELOG.md`: release notes
 - `testData/`: small example datasets and fixtures
 
 ## Contributing

@@ -58,15 +58,15 @@ This is the file you can share with Windows users.
 
 ## How to update the version in the future
 
-1. Open `app_metadata.py`.
-2. Update `APP_VERSION`.
+1. Update `VERSION` at the repo root (single source of truth).
+2. Append release notes in `CHANGELOG.md`.
 3. Re-run:
 
 ```
 build_installer.bat
 ```
 
-The version is pulled automatically into both the EXE and the installer.
+The version is pulled automatically into both the EXE and the installer via `app_metadata.py` and `packaging/generate_installer_vars.py`.
 
 ## Common errors and fixes
 
