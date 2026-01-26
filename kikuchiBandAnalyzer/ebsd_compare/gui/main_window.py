@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
+from kikuchiBandAnalyzer.ebsd_compare.export_oh5 import Oh5ComparisonExporter
 from kikuchiBandAnalyzer.ebsd_compare.field_selection import (
     resolve_pattern_fields,
     resolve_scalar_fields,
@@ -523,6 +524,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._map_contrast_low_default = 2.0
         self._map_contrast_high_default = 98.0
         self._pattern_reset_view = True
+        self._exporter = Oh5ComparisonExporter(logger=self._logger)
         auto_config = self._config.get("auto_scan", {})
         self._auto_min_ms = int(auto_config.get("min_delay_ms", 25))
         self._auto_max_ms = int(auto_config.get("max_delay_ms", 2000))
@@ -634,6 +636,14 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             "Save a PNG screenshot of the current comparison view."
         )
         control_row.addWidget(self._screenshot_button)
+        self._export_button = QtWidgets.QPushButton("Export Comparison OH5")
+        self._export_button.clicked.connect(self._on_export_comparison_oh5)
+        self._export_button.setFixedWidth(180)
+        self._export_button.setEnabled(False)
+        self._export_button.setToolTip(
+            "Export aligned delta/ratio maps into a new OH5 file that TSL/OIM can load."
+        )
+        control_row.addWidget(self._export_button)
         control_row.addSpacing(12)
         control_row.addWidget(QtWidgets.QLabel("X (col)"))
         control_row.addWidget(self._x_input)
@@ -948,6 +958,8 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._populate_map_fields()
         self._select_pattern_field()
         self._pattern_reset_view = True
+        if hasattr(self, "_export_button"):
+            self._export_button.setEnabled(True)
         self._update_maps()
         x, y = self._engine.default_probe_xy()
         self.set_selected_pixel(x, y, source="init")
@@ -1448,6 +1460,8 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._auto_pause_button.setEnabled(False)
         self._auto_stop_button.setEnabled(False)
         self._auto_speed_spin.setEnabled(False)
+        if hasattr(self, "_export_button"):
+            self._export_button.setEnabled(False)
         if self._inline_status_label is not None:
             self._inline_status_label.setText("X=--, Y=--")
         self._clear_inline_error()
@@ -1970,6 +1984,80 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         )
         if path:
             self.save_screenshot(Path(path))
+
+    def _on_export_comparison_oh5(self) -> None:
+        """Export aligned comparison maps into a new OH5 file.
+
+        The output file is named `{stemA}_{stemB}_comparison.oh5` and is written
+        next to scan A. All common scalar fields are exported (excluding Phase).
+        """
+
+        if self._engine is None or self._scan_a is None or self._scan_b is None:
+            QtWidgets.QMessageBox.warning(
+                self, "No scans", "Load scans before exporting a comparison OH5."
+            )
+            return
+        default_mode = str(self._config.get("display", {}).get("map_diff_mode", "delta"))
+        label_map = {
+            "Delta (A - B)": "delta",
+            "Absolute Delta (|A - B|)": "abs_delta",
+            "Ratio (A / B)": "ratio",
+        }
+        labels = list(label_map.keys())
+        initial = max(0, labels.index("Ratio (A / B)") if default_mode == "ratio" else 0)
+        selection, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Export Comparison OH5",
+            "Choose comparison mode:",
+            labels,
+            current=initial,
+            editable=False,
+        )
+        if not ok:
+            return
+        mode = label_map.get(str(selection), "delta")
+        output_dir = self._scan_a.file_path.parent
+        output_name = f"{self._scan_a.file_path.stem}_{self._scan_b.file_path.stem}_comparison.oh5"
+        output_path = output_dir / output_name
+        if output_path.exists():
+            response = QtWidgets.QMessageBox.question(
+                self,
+                "Overwrite file?",
+                f"Output file already exists:\n{output_path}\n\nOverwrite it?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if response != QtWidgets.QMessageBox.Yes:
+                return
+        try:
+            result = self._exporter.export(
+                self._scan_a,
+                self._scan_b,
+                self._engine,
+                output_path,
+                mode=mode,
+                alignment=self._alignment_result,
+                overwrite=True,
+                excluded_fields=["Phase"],
+            )
+        except Exception as exc:
+            self._logger.exception("Failed to export comparison OH5: %s", exc)
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Export failed",
+                f"Failed to export comparison OH5:\n{exc}",
+            )
+            return
+        message = (
+            f"Exported comparison OH5:\n{result.output_path}\n\n"
+            f"Exported fields: {len(result.exported_fields)}\n"
+            f"Skipped fields: {len(result.skipped_fields)}"
+        )
+        self._logger.info(message.replace("\n", " | "))
+        self.statusBar().showMessage(
+            f"Exported comparison OH5: {result.output_path.name}", 8000
+        )
+        QtWidgets.QMessageBox.information(self, "Export complete", message)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

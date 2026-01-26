@@ -110,6 +110,8 @@ If you run a CycleGAN (or other model) to enhance patterns before band‑width a
 
 This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. Use the `fields` list in the YAML config to select which scalar maps to compare, and `sync_navigation` to toggle linked pan/zoom. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
 
+The GUI also provides an **Export Comparison OH5** button which writes `{stemA}_{stemB}_comparison.oh5` next to scan A. The export copies scan A as a template, overwrites scalar maps with the chosen delta/ratio result (A/B for ratio), skips Phase-like fields, and embeds alignment metadata for traceability.
+
 Common commands:
 
 ```bash

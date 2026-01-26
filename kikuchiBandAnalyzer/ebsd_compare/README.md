@@ -49,6 +49,16 @@ The GUI uses a compact three-row control strip (file paths, display/coordinate c
 - Pattern panels include Home/Zoom/Pan controls and stay synchronized while inspecting patterns when `sync_navigation` is enabled.
 - The top controls are compact to keep the map and pattern viewers dominant, with toolbars embedded inside each viewer.
 
+### Export comparison OH5
+
+The GUI includes an **Export Comparison OH5** button that writes an OH5 file designed to be loaded by downstream TSL/OIM tooling.
+
+- Output path: written next to scan A as `{stemA}_{stemB}_comparison.oh5`
+- Mode: choose **Delta (A - B)**, **Absolute Delta**, or **Ratio (A / B)** at export time
+- Fields: exports all common scalar maps discovered under `/<scan>/EBSD/Data/` (skips Phase-like fields)
+- Layout: copies scan A as a template and overwrites each exported scalar dataset with the comparison map so dataset names remain unchanged
+- Metadata: stores export context and alignment details under `/<scan>/EBSD/Compare/` (including an `alignment_yaml` payload when alignment is active)
+
 ### Registration + alignment
 
 If the scans do not share the same grid shape, the GUI launches a registration dialog. The registration tool is designed for research-grade alignment workflows and includes:
