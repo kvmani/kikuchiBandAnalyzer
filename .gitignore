@@ -10,3 +10,11 @@ testData/*_noisy.oh5
 build/
 dist/
 packaging/version_info.txt
+bandDetector.log
+kikuchi_lines.csv
+kikuchi_lines.json
+testData/*.h5
+testData/*_bandOutputData.csv
+testData/*_filtered_band_data.csv
+testData/*_modified*.ang
+testData/*_modified.h5

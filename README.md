@@ -4,6 +4,11 @@ Kikuchi Band Analyzer is a research Python toolkit for measuring Kikuchi band wi
 
 This repo also contains utilities for exporting EBSD patterns to images (useful for machine‑learning workflows) and reconstructing processed images back into HDF5.
 
+New in this repo version:
+- Band-profile exports now include bandwidth search indices (`band_start_idx`, `band_end_idx`, `central_peak_idx`, `profile_length`) in both JSON and OH5/HDF5 outputs.
+- A visualization-first **Automator GUI** is available for running the pipeline from YAML without freezing the UI.
+- EBSD Comparator can overlay and compare exported `band_profile` vectors from Scan A/B.
+
 ## Quickstart (run on included test data)
 
 1. Install dependencies:
@@ -99,6 +104,17 @@ Derived field definitions:
 
 JSON annotation details:
 - See [`docs/ebsd_json_schema.md`](docs/ebsd_json_schema.md) for the input/output JSON schemas, `pattern_path` semantics, and mapping to CSV/HDF5 outputs.
+- See [`docs/data_formats.md`](docs/data_formats.md) for the authoritative JSON + OH5/HDF5 dataset schema (paths, shapes, dtypes).
+
+### Band-profile datasets (new)
+
+When available, the pipeline writes the following additional datasets under `/<scan_name>/EBSD/Data/`:
+
+- `band_profile`: `(nPixels, profile_len)` float32
+- `central_line`: `(nPixels, 4)` float32
+- `band_start_idx`, `band_end_idx`, `central_peak_idx`: `(nPixels,)` int32 (`-1` when unavailable)
+- `profile_length`: `(nPixels,)` int32
+- `band_valid`: `(nPixels,)` int8 (1 when a valid best-band profile is stored)
 
 ## Optional: CycleGAN / ML preprocessing workflow
 
@@ -113,7 +129,12 @@ If you run a CycleGAN (or other model) to enhance patterns before band‑width a
 
 This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. Use the `fields` list in the YAML config to select which scalar maps to compare, and `sync_navigation` to toggle linked pan/zoom. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
 
-The GUI also provides an **Export Comparison OH5** button which writes `{stemA}_{stemB}_comparison.oh5` next to scan A. The export copies scan A as a template, overwrites scalar maps with the chosen delta/ratio result (A/B for ratio), skips Phase-like fields, and embeds alignment metadata for traceability.
+The GUI also provides:
+- A **band profile comparison** panel that plots `band_profile` from Scan A/B on shared axes and overlays `central_line` on patterns when those datasets exist.
+- An **Export Comparison OH5** button which writes `{stemA}_{stemB}_comparison.oh5` next to scan A. The export copies scan A as a template, overwrites scalar maps with the chosen delta/ratio result (A/B for ratio), skips Phase-like fields, and embeds alignment metadata for traceability.
+
+User guide:
+- [`docs/ebsd_comparator_band_profiles.md`](docs/ebsd_comparator_band_profiles.md)
 
 Common commands:
 
@@ -122,10 +143,19 @@ python scripts/make_noisy_oh5.py --config configs/ebsd_compare_config.yml
 python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd_compare_config.yml
 python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd_compare_config.yml --debug
 python scripts/run_ebsd_compare_demo.py --config configs/ebsd_compare_config.yml
+python -m kikuchiBandAnalyzer.automator_gui.main_window --config bandDetectorOptionsHcp.yml
+python scripts/run_automator_gui_demo.py --debug
 pytest -q
 ```
 
-Note: generated demo artifacts (noisy OH5 and GUI screenshots) are created locally and are not committed.
+Note: proof screenshots used by the documentation live in `docs/screenshots/`.
+
+## Automator GUI
+
+The Automator GUI runs the same analysis engine as `KikuchiBandWidthAutomator.py`, but provides a visualization-first workflow (map/pattern/profile) and progress monitoring.
+
+User guide:
+- [`docs/automator_gui.md`](docs/automator_gui.md)
 
 ## Windows installer (EBSD Scan Comparator)
 

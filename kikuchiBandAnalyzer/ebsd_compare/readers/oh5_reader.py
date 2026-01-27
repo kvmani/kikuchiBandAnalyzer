@@ -155,6 +155,31 @@ class OH5ScanFileReader(ScanFileReader):
             f"Pattern field '{field_ref.name}' has unsupported shape {dataset.shape}."
         )
 
+    def get_vector(self, field_name: str, x: int, y: int) -> Optional[np.ndarray]:
+        """Return a vector value at the specified coordinate.
+
+        Parameters:
+            field_name: Name of the vector field.
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            1D NumPy array for the vector value, or None if unavailable.
+        """
+
+        field_ref = self._resolve_vector_field(field_name)
+        if field_ref is None:
+            return None
+        dataset = self._file[field_ref.path]
+        if dataset.ndim == 2 and dataset.shape[0] == self._nx * self._ny:
+            index = y * self._nx + x
+            return np.asarray(dataset[index])
+        if dataset.ndim == 3 and dataset.shape[:2] == (self._ny, self._nx):
+            return np.asarray(dataset[y, x])
+        raise ValueError(
+            f"Vector field '{field_ref.name}' has unsupported shape {dataset.shape}."
+        )
+
     def close(self) -> None:
         """Close the underlying HDF5 file."""
 
@@ -217,10 +242,11 @@ class OH5ScanFileReader(ScanFileReader):
         """Discover scalar and pattern fields in the scan.
 
         Returns:
-            FieldCatalog with scalar and pattern fields.
+            FieldCatalog with scalar, vector, and pattern fields.
         """
 
         scalars: Dict[str, FieldRef] = {}
+        vectors: Dict[str, FieldRef] = {}
         patterns: Dict[str, FieldRef] = {}
         for name, dataset in self._data_group.items():
             if not isinstance(dataset, h5py.Dataset):
@@ -235,6 +261,16 @@ class OH5ScanFileReader(ScanFileReader):
             if self._is_scalar_dataset(dataset):
                 scalars[name] = field_ref
                 continue
+            if self._is_vector_dataset(dataset):
+                field_ref = FieldRef(
+                    name=name,
+                    path=dataset.name,
+                    kind="vector",
+                    shape=dataset.shape,
+                    dtype=str(dataset.dtype),
+                )
+                vectors[name] = field_ref
+                continue
             if self._is_pattern_dataset(dataset):
                 field_ref = FieldRef(
                     name=name,
@@ -245,11 +281,12 @@ class OH5ScanFileReader(ScanFileReader):
                 )
                 patterns[name] = field_ref
         self._logger.debug(
-            "Discovered %d scalar fields and %d pattern fields.",
+            "Discovered %d scalar fields, %d vector fields, and %d pattern fields.",
             len(scalars),
+            len(vectors),
             len(patterns),
         )
-        return FieldCatalog(scalars=scalars, patterns=patterns)
+        return FieldCatalog(scalars=scalars, vectors=vectors, patterns=patterns)
 
     def _is_scalar_dataset(self, dataset: h5py.Dataset) -> bool:
         """Determine if a dataset is a scalar map.
@@ -281,6 +318,22 @@ class OH5ScanFileReader(ScanFileReader):
             return True
         if dataset.ndim >= 3 and dataset.shape[:2] == (self._ny, self._nx):
             return True
+        return False
+
+    def _is_vector_dataset(self, dataset: h5py.Dataset) -> bool:
+        """Determine if a dataset is a vector-per-pixel stack.
+
+        Parameters:
+            dataset: HDF5 dataset.
+
+        Returns:
+            True if dataset represents vectors indexed per pixel.
+        """
+
+        if dataset.ndim == 2 and dataset.shape[0] == self._nx * self._ny:
+            return dataset.shape[1] > 1
+        if dataset.ndim == 3 and dataset.shape[:2] == (self._ny, self._nx):
+            return dataset.shape[2] > 1
         return False
 
     def _reshape_pattern(self, pattern: np.ndarray) -> np.ndarray:
@@ -362,4 +415,22 @@ class OH5ScanFileReader(ScanFileReader):
         canonical = self._alias_map.get(normalized)
         if canonical and canonical in self._catalog.patterns:
             return self._catalog.patterns[canonical]
+        return None
+
+    def _resolve_vector_field(self, field_name: str) -> Optional[FieldRef]:
+        """Resolve a vector field name using aliases.
+
+        Parameters:
+            field_name: Requested field name.
+
+        Returns:
+            FieldRef for the vector field, or None if unavailable.
+        """
+
+        if field_name in self._catalog.vectors:
+            return self._catalog.vectors[field_name]
+        normalized = self._normalize_field_name(field_name)
+        canonical = self._alias_map.get(normalized)
+        if canonical and canonical in self._catalog.vectors:
+            return self._catalog.vectors[canonical]
         return None

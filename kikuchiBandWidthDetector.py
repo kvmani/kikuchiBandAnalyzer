@@ -30,8 +30,13 @@ from diffpy.structure import Atom, Lattice, Structure
 from orix.crystal_map import Phase
 from orix.vector import Miller
 from typing import Union, Tuple
+from typing import Callable, Optional
 
 from strategies import RectangularAreaBandDetector
+
+
+class ProcessingCancelled(RuntimeError):
+    """Raised when batch processing is cancelled by a caller."""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # logging
@@ -174,23 +179,58 @@ class KikuchiBatchProcessor:
             entry["pattern_path"] = json_entry["pattern_path"]
         return entry
 
-    def _process_serial(self):
-        """Serial implementation used for all processing."""
+    def _process_serial(
+        self,
+        progress_callback: Optional[Callable[[int, int, int, int, Dict[str, Any]], None]] = None,
+        cancel_callback: Optional[Callable[[], bool]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Serial implementation used for all processing.
+
+        Parameters:
+            progress_callback: Optional callback invoked after each processed pixel.
+                Signature: (row, col, processed_count, total_count, entry) -> None.
+            cancel_callback: Optional callable returning True when cancellation is requested.
+
+        Returns:
+            List of processed entries.
+        """
         processed = []
         ncol = self.ebsd_data.shape[1]
+        total = int(np.prod(self.ebsd_data.shape[:2]))
+        processed_count = 0
         for row in tqdm(range(self.ebsd_data.shape[0]), desc="Processing rows"):
             for col in range(self.ebsd_data.shape[1]):
+                if cancel_callback is not None and cancel_callback():
+                    raise ProcessingCancelled(f"Cancelled at row={row}, col={col}.")
                 idx = ncol * row + col
                 entry = self.process_kikuchi_image_at_pixel(
                     row, col, self.json_input[idx]
                 )
                 processed.append(entry)
+                processed_count += 1
+                if progress_callback is not None:
+                    progress_callback(row, col, processed_count, total, entry)
         return processed
 
-    def process(self):
-        """Process the entire data set and return results list."""
+    def process(
+        self,
+        progress_callback: Optional[Callable[[int, int, int, int, Dict[str, Any]], None]] = None,
+        cancel_callback: Optional[Callable[[], bool]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Process the entire data set and return results list.
+
+        Parameters:
+            progress_callback: Optional callback invoked after each processed pixel.
+            cancel_callback: Optional callable returning True when cancellation is requested.
+
+        Returns:
+            List of processed results.
+        """
         start = time.time()
-        processed = self._process_serial()
+        processed = self._process_serial(
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
         dur = time.time() - start
         n_patterns = np.prod(self.ebsd_data.shape[:2])
         logging.info(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -81,6 +82,7 @@ class LogFilterProxyModel(QtCore.QSortFilterProxyModel):
 
         super().__init__(parent=parent)
         self._level_filter: Optional[str] = None
+        self._text_filter: str = ""
 
     def set_level_filter(self, level: Optional[str]) -> None:
         """Set the level filter string.
@@ -93,6 +95,16 @@ class LogFilterProxyModel(QtCore.QSortFilterProxyModel):
         """
 
         self._level_filter = level
+        self.invalidateFilter()
+
+    def set_text_filter(self, text: str) -> None:
+        """Set the substring filter applied to log messages.
+
+        Parameters:
+            text: Substring to match (case-insensitive). Empty disables filtering.
+        """
+
+        self._text_filter = text or ""
         self.invalidateFilter()
 
     def filterAcceptsRow(
@@ -108,13 +120,23 @@ class LogFilterProxyModel(QtCore.QSortFilterProxyModel):
             True if row should be visible, otherwise False.
         """
 
-        if not self._level_filter or self._level_filter == "All":
-            return True
-        level_index = self.sourceModel().index(source_row, 1, source_parent)
-        level_text = self.sourceModel().data(level_index, QtCore.Qt.DisplayRole)
-        if level_text is None:
-            return False
-        return str(level_text).upper() == self._level_filter.upper()
+        if self._level_filter and self._level_filter != "All":
+            level_index = self.sourceModel().index(source_row, 1, source_parent)
+            level_text = self.sourceModel().data(level_index, QtCore.Qt.DisplayRole)
+            if level_text is None:
+                return False
+            if str(level_text).upper() != self._level_filter.upper():
+                return False
+
+        if self._text_filter:
+            message_index = self.sourceModel().index(source_row, 2, source_parent)
+            message_text = self.sourceModel().data(message_index, QtCore.Qt.DisplayRole)
+            if message_text is None:
+                return False
+            if self._text_filter.lower() not in str(message_text).lower():
+                return False
+
+        return True
 
 
 class LogViewer(QtWidgets.QWidget):
@@ -159,6 +181,12 @@ class LogViewer(QtWidgets.QWidget):
         self._filter_combo.setToolTip(
             "Filter log entries by level. Set to All to show everything."
         )
+        self._search_edit = QtWidgets.QLineEdit()
+        self._search_edit.setPlaceholderText("Search…")
+        self._search_edit.textChanged.connect(self._on_search_change)
+        self._search_edit.setToolTip(
+            "Filter log messages by substring (case-insensitive)."
+        )
         self._copy_selected_button = QtWidgets.QPushButton("Copy Selected")
         self._copy_selected_button.clicked.connect(self._copy_selected)
         self._copy_selected_button.setToolTip(
@@ -167,6 +195,11 @@ class LogViewer(QtWidgets.QWidget):
         self._copy_all_button = QtWidgets.QPushButton("Copy All")
         self._copy_all_button.clicked.connect(self._copy_all)
         self._copy_all_button.setToolTip("Copy all visible log rows to the clipboard.")
+        self._save_button = QtWidgets.QPushButton("Save…")
+        self._save_button.clicked.connect(self._save_visible)
+        self._save_button.setToolTip(
+            "Save the currently visible log rows (after filtering) to a text file."
+        )
         self._clear_button = QtWidgets.QPushButton("Clear Logs")
         self._clear_button.clicked.connect(self.clear)
         self._clear_button.setToolTip("Clear the log console output.")
@@ -190,9 +223,12 @@ class LogViewer(QtWidgets.QWidget):
         controls_layout.addWidget(self._auto_scroll_checkbox)
         controls_layout.addWidget(QtWidgets.QLabel("Level"))
         controls_layout.addWidget(self._filter_combo)
+        controls_layout.addWidget(QtWidgets.QLabel("Search"))
+        controls_layout.addWidget(self._search_edit)
         controls_layout.addStretch(1)
         controls_layout.addWidget(self._copy_selected_button)
         controls_layout.addWidget(self._copy_all_button)
+        controls_layout.addWidget(self._save_button)
         controls_layout.addWidget(self._clear_button)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -262,6 +298,31 @@ class LogViewer(QtWidgets.QWidget):
         """
 
         self._proxy.set_level_filter(text)
+
+    def _on_search_change(self, text: str) -> None:
+        """Update the proxy search filter from the search box.
+
+        Parameters:
+            text: Current search text.
+        """
+
+        self._proxy.set_text_filter(text)
+
+    def _save_visible(self) -> None:
+        """Save visible log rows to a text file."""
+
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Logs", filter="Text Files (*.txt);;All Files (*)"
+        )
+        if not path:
+            return
+        lines = []
+        for row in range(self._proxy.rowCount()):
+            timestamp = self._proxy.index(row, 0).data()
+            level = self._proxy.index(row, 1).data()
+            message = self._proxy.index(row, 2).data()
+            lines.append(f"{timestamp} | {level} | {message}")
+        Path(path).write_text("\n".join(lines), encoding="utf-8")
 
     def _copy_selected(self) -> None:
         """Copy the selected log rows to the clipboard.

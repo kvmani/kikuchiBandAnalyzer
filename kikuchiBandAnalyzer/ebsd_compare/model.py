@@ -19,7 +19,7 @@ class FieldRef:
     Parameters:
         name: Human-readable field name.
         path: HDF5 dataset path for the field.
-        kind: The field kind ("scalar" or "pattern").
+        kind: The field kind ("scalar", "vector", or "pattern").
         shape: Shape of the underlying dataset.
         dtype: Data type of the underlying dataset.
     """
@@ -37,10 +37,12 @@ class FieldCatalog:
 
     Parameters:
         scalars: Mapping of scalar field names to references.
+        vectors: Mapping of vector field names to references.
         patterns: Mapping of pattern field names to references.
     """
 
     scalars: Dict[str, FieldRef]
+    vectors: Dict[str, FieldRef]
     patterns: Dict[str, FieldRef]
 
     def list_scalar_fields(self) -> list[str]:
@@ -60,6 +62,15 @@ class FieldCatalog:
         """
 
         return sorted(self.patterns.keys())
+
+    def list_vector_fields(self) -> list[str]:
+        """Return the vector field names.
+
+        Returns:
+            List of vector field names.
+        """
+
+        return sorted(self.vectors.keys())
 
 
 @dataclass
@@ -121,6 +132,20 @@ class ScanDataset:
         """
 
         return self.reader.get_pattern(field_name, x, y)
+
+    def get_vector(self, field_name: str, x: int, y: int) -> Optional[np.ndarray]:
+        """Return a vector value at the specified coordinate.
+
+        Parameters:
+            field_name: Name of the vector field.
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            1D NumPy array for the vector value, or None if unavailable.
+        """
+
+        return self.reader.get_vector(field_name, x, y)
 
     def close(self) -> None:
         """Close the underlying reader resources."""

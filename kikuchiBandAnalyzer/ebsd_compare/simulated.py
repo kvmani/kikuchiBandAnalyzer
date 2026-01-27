@@ -21,16 +21,19 @@ class InMemoryScanReader(ScanFileReader):
         self,
         maps: Dict[str, np.ndarray],
         patterns: Optional[Dict[str, np.ndarray]] = None,
+        vectors: Optional[Dict[str, np.ndarray]] = None,
     ) -> None:
         """Initialize the in-memory reader.
 
         Parameters:
             maps: Mapping of scalar field names to 2D arrays.
             patterns: Mapping of pattern field names to arrays.
+            vectors: Mapping of vector field names to arrays.
         """
 
         self._maps = maps
         self._patterns = patterns or {}
+        self._vectors = vectors or {}
         self._catalog = self._build_catalog()
 
     def catalog(self) -> FieldCatalog:
@@ -91,6 +94,29 @@ class InMemoryScanReader(ScanFileReader):
             return np.array(patterns[index], copy=False)
         raise ValueError(f"Unsupported pattern array shape {patterns.shape}.")
 
+    def get_vector(self, field_name: str, x: int, y: int) -> Optional[np.ndarray]:
+        """Return a vector value at the specified coordinate.
+
+        Parameters:
+            field_name: Name of the vector field.
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            Vector array or None if unavailable.
+        """
+
+        if field_name not in self._vectors:
+            return None
+        vectors = self._vectors[field_name]
+        if vectors.ndim == 2:
+            ny, nx = self._maps[next(iter(self._maps))].shape
+            index = y * nx + x
+            return np.array(vectors[index], copy=False)
+        if vectors.ndim == 3:
+            return np.array(vectors[y, x], copy=False)
+        raise ValueError(f"Unsupported vector array shape {vectors.shape}.")
+
     def close(self) -> None:
         """Release any held resources.
 
@@ -116,6 +142,15 @@ class InMemoryScanReader(ScanFileReader):
                 shape=tuple(array.shape),
                 dtype=str(array.dtype),
             )
+        vectors = {}
+        for name, array in self._vectors.items():
+            vectors[name] = FieldRef(
+                name=name,
+                path=f"memory:{name}",
+                kind="vector",
+                shape=tuple(array.shape),
+                dtype=str(array.dtype),
+            )
         patterns = {}
         for name, array in self._patterns.items():
             patterns[name] = FieldRef(
@@ -125,7 +160,7 @@ class InMemoryScanReader(ScanFileReader):
                 shape=tuple(array.shape),
                 dtype=str(array.dtype),
             )
-        return FieldCatalog(scalars=scalars, patterns=patterns)
+        return FieldCatalog(scalars=scalars, vectors=vectors, patterns=patterns)
 
 
 @dataclass(frozen=True)

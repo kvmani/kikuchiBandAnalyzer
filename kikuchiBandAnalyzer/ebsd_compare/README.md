@@ -13,6 +13,7 @@ This package provides a field-discovery-driven comparator for EBSD scans stored 
 
 - The reader locates the first top-level scan group that is **not** `Manufacturer` or `Version`.
 - Scalar maps are detected by their shape matching `(nRows, nColumns)` or `(nRows * nColumns,)`.
+- Vector-per-pixel datasets are detected by shapes like `(nRows * nColumns, k)` or `(nRows, nColumns, k)` (for example `band_profile` and `central_line`).
 - Pattern stacks are detected by shapes like `(nRows * nColumns, height, width)` or `(nRows, nColumns, height, width)`.
 - Field aliasing is supported via the `field_aliases` section of the YAML config.
 
@@ -49,6 +50,16 @@ The GUI uses a compact three-row control strip (file paths, display/coordinate c
 - Pattern panels include Home/Zoom/Pan controls and stay synchronized while inspecting patterns when `sync_navigation` is enabled.
 - The top controls are compact to keep the map and pattern viewers dominant, with toolbars embedded inside each viewer.
 
+### Band profile comparison (new)
+
+If your OH5 files contain the exported band datasets (`band_profile`, `central_line`, `band_start_idx`, `band_end_idx`, ...), the GUI enables a profile comparison plot:
+
+- Plots `band_profile` from Scan A and Scan B on shared axes (optional normalization).
+- Overlays `central_line` on patterns (toggleable per pattern).
+- Adds probe-table rows for key band scalar fields when present.
+
+User guide: `docs/ebsd_comparator_band_profiles.md`
+
 ### Export comparison OH5
 
 The GUI includes an **Export Comparison OH5** button that writes an OH5 file designed to be loaded by downstream TSL/OIM tooling.
@@ -75,7 +86,7 @@ Once alignment is accepted, all downstream comparisons use the aligned scan B da
 
 ## Logging
 
-The GUI includes a log console docked at the bottom of the main window. Logs are timestamped and leveled, include colored icons, and can be filtered by level. Use auto-scroll to follow live updates, Clear Logs to reset the view, and Copy Selected/Copy All to share logs in bug reports.
+The GUI includes a log console docked at the bottom of the main window. Logs are timestamped and leveled, include colored icons, and can be filtered by level and searched by substring. Use auto-scroll to follow live updates, Clear Logs to reset the view, Copy Selected/Copy All to share logs in bug reports, and Save… to export the visible log rows to a text file.
 
 ## Debug mode
 
@@ -113,7 +124,7 @@ This produces `testData/Test_Ti_noisy.oh5` by adding deterministic Gaussian nois
 python scripts/run_ebsd_compare_demo.py --config configs/ebsd_compare_config.yml
 ```
 
-The demo script generates the noisy file (if needed), launches the GUI, auto-loads scans A/B, auto-probes the center pixel, and saves a proof screenshot to `tmp/ebsd_compare_gui_proof.png` (the screenshot is generated locally and not committed).
+The demo script generates a small simulated dataset in debug mode, launches the GUI, auto-loads scans A/B, auto-probes the center pixel, and saves a proof screenshot to `docs/screenshots/ebsd_compare_band_profile_proof.png`.
 
 ## Configuration
 

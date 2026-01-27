@@ -18,6 +18,10 @@ from matplotlib.figure import Figure
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
+from kikuchiBandAnalyzer.ebsd_compare.band_data import (
+    BandProfilePayload,
+    extract_band_profile_payload,
+)
 from kikuchiBandAnalyzer.ebsd_compare.export_oh5 import Oh5ComparisonExporter
 from kikuchiBandAnalyzer.ebsd_compare.field_selection import (
     resolve_pattern_fields,
@@ -25,6 +29,7 @@ from kikuchiBandAnalyzer.ebsd_compare.field_selection import (
     resolve_sync_navigation,
 )
 from kikuchiBandAnalyzer.ebsd_compare.gui.auto_scan import AutoScanController
+from kikuchiBandAnalyzer.ebsd_compare.gui.band_profile_plot import BandProfilePlot
 from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import (
     GuiLogHandler,
     LogEmitter,
@@ -41,6 +46,7 @@ from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReade
 from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import (
     AlignmentResult,
     alignment_from_config,
+    alignment_settings_from_config,
 )
 from kikuchiBandAnalyzer.ebsd_compare.simulated import SimulatedScanFactory
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging, load_yaml_config
@@ -102,6 +108,14 @@ class MapCanvas(FigureCanvas):
         self._marker_coords: Optional[Tuple[int, int]] = None
         self._marker_artist = None
         self._marker_color = "#ffdd00"
+        self._secondary_marker_coords: Optional[Tuple[int, int]] = None
+        self._secondary_marker_artist = None
+        self._secondary_marker_color = "#ff0000"
+        self._overlay_line_coords: Optional[Tuple[float, float, float, float]] = None
+        self._overlay_line_artist = None
+        self._overlay_line_color = "#00b060"
+        self._overlay_line_width = 2.0
+        self._overlay_line_visible = True
         self._reset_callbacks: List[Callable[[MapCanvas], None]] = []
         self._axes.set_title(title)
         self._axes.set_xticks([])
@@ -146,14 +160,21 @@ class MapCanvas(FigureCanvas):
             self._axes.set_yticks([])
             self._image = self._axes.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
             self._marker_artist = None
+            self._secondary_marker_artist = None
+            self._overlay_line_artist = None
             if self._marker_coords is not None:
                 self._draw_marker()
+            if self._secondary_marker_coords is not None:
+                self._draw_secondary_marker()
+            if self._overlay_line_coords is not None and self._overlay_line_visible:
+                self._draw_overlay_line()
             self._notify_reset()
         else:
             self._image.set_data(data)
             self._image.set_cmap(cmap)
             if vmin is not None or vmax is not None:
                 self._image.set_clim(vmin=vmin, vmax=vmax)
+            self._update_overlay_line()
         self._figure.tight_layout()
         self.draw_idle()
 
@@ -203,6 +224,75 @@ class MapCanvas(FigureCanvas):
             self._marker_artist = None
             self.draw_idle()
 
+    def set_secondary_marker(self, x: int, y: int, color: str = "#ff0000") -> None:
+        """Set a secondary marker location (used for progress indicators).
+
+        Parameters:
+            x: Column index.
+            y: Row index.
+            color: Marker color.
+        """
+
+        self._secondary_marker_coords = (x, y)
+        self._secondary_marker_color = color
+        if self._image is not None:
+            self._draw_secondary_marker()
+            self.draw_idle()
+
+    def clear_secondary_marker(self) -> None:
+        """Clear the secondary marker from the canvas."""
+
+        self._secondary_marker_coords = None
+        if self._secondary_marker_artist is not None:
+            self._secondary_marker_artist.remove()
+            self._secondary_marker_artist = None
+            self.draw_idle()
+
+    def set_overlay_line(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        color: str = "#00b060",
+        linewidth: float = 2.0,
+    ) -> None:
+        """Set an overlay line on the canvas (used for band center lines).
+
+        Parameters:
+            x1: Line start X coordinate.
+            y1: Line start Y coordinate.
+            x2: Line end X coordinate.
+            y2: Line end Y coordinate.
+            color: Line color.
+            linewidth: Line width.
+        """
+
+        self._overlay_line_coords = (float(x1), float(y1), float(x2), float(y2))
+        self._overlay_line_color = color
+        self._overlay_line_width = float(linewidth)
+        self._update_overlay_line()
+
+    def clear_overlay_line(self) -> None:
+        """Clear any overlay line from the canvas."""
+
+        self._overlay_line_coords = None
+        if self._overlay_line_artist is not None:
+            self._overlay_line_artist.remove()
+            self._overlay_line_artist = None
+            self.draw_idle()
+
+    def set_overlay_visible(self, visible: bool) -> None:
+        """Show or hide the overlay line.
+
+        Parameters:
+            visible: True to show, False to hide.
+        """
+
+        self._overlay_line_visible = bool(visible)
+        self._update_overlay_line()
+
     def _draw_marker(self) -> None:
         """Draw the marker on the map.
 
@@ -224,6 +314,64 @@ class MapCanvas(FigureCanvas):
             linewidths=2.0,
             zorder=3,
         )
+
+    def _draw_secondary_marker(self) -> None:
+        """Draw the secondary marker on the map."""
+
+        if self._secondary_marker_coords is None:
+            return
+        if self._secondary_marker_artist is not None:
+            self._secondary_marker_artist.remove()
+        x, y = self._secondary_marker_coords
+        self._secondary_marker_artist = self._axes.scatter(
+            [x],
+            [y],
+            s=55,
+            c=self._secondary_marker_color,
+            marker="o",
+            edgecolors="white",
+            linewidths=1.2,
+            zorder=3,
+        )
+
+    def _draw_overlay_line(self) -> None:
+        """Draw the stored overlay line."""
+
+        if self._overlay_line_coords is None:
+            return
+        if self._overlay_line_artist is not None:
+            self._overlay_line_artist.remove()
+        x1, y1, x2, y2 = self._overlay_line_coords
+        (artist,) = self._axes.plot(
+            [x1, x2],
+            [y1, y2],
+            color=self._overlay_line_color,
+            linewidth=self._overlay_line_width,
+            alpha=0.85,
+            zorder=4,
+        )
+        self._overlay_line_artist = artist
+
+    def _update_overlay_line(self) -> None:
+        """Update the overlay line artist based on the stored state."""
+
+        if self._image is None:
+            return
+        if not self._overlay_line_visible or self._overlay_line_coords is None:
+            if self._overlay_line_artist is not None:
+                self._overlay_line_artist.remove()
+                self._overlay_line_artist = None
+                self.draw_idle()
+            return
+        if self._overlay_line_artist is None:
+            self._draw_overlay_line()
+            self.draw_idle()
+            return
+        x1, y1, x2, y2 = self._overlay_line_coords
+        self._overlay_line_artist.set_data([x1, x2], [y1, y2])
+        self._overlay_line_artist.set_color(self._overlay_line_color)
+        self._overlay_line_artist.set_linewidth(self._overlay_line_width)
+        self.draw_idle()
 
     def _notify_reset(self) -> None:
         """Invoke registered reset callbacks.
@@ -524,6 +672,13 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._map_contrast_low_default = 2.0
         self._map_contrast_high_default = 98.0
         self._pattern_reset_view = True
+        self._last_selected_xy: Optional[Tuple[int, int]] = None
+        self._band_profile_plot: Optional[BandProfilePlot] = None
+        self._profile_normalize_checkbox: Optional[QtWidgets.QCheckBox] = None
+        self._profile_markers_checkbox: Optional[QtWidgets.QCheckBox] = None
+        self._overlay_line_a_checkbox: Optional[QtWidgets.QCheckBox] = None
+        self._overlay_line_b_checkbox: Optional[QtWidgets.QCheckBox] = None
+        self._band_profile_status_label: Optional[QtWidgets.QLabel] = None
         self._exporter = Oh5ComparisonExporter(logger=self._logger)
         auto_config = self._config.get("auto_scan", {})
         self._auto_min_ms = int(auto_config.get("min_delay_ms", 25))
@@ -758,11 +913,16 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         )
         probe_layout.addWidget(self._probe_table)
 
-        pattern_group = QtWidgets.QGroupBox("Pattern Comparison")
+        pattern_group = QtWidgets.QGroupBox("Pattern + Band Profile Comparison")
         pattern_group.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
-        pattern_layout = QtWidgets.QHBoxLayout(pattern_group)
+        pattern_layout = QtWidgets.QVBoxLayout(pattern_group)
+        pattern_layout.setContentsMargins(6, 6, 6, 6)
+        pattern_layout.setSpacing(6)
+        patterns_row = QtWidgets.QHBoxLayout()
+        patterns_row.setContentsMargins(0, 0, 0, 0)
+        patterns_row.setSpacing(6)
         self._pattern_panel_a = PatternPanel("Pattern A")
         self._pattern_panel_b = PatternPanel("Pattern B")
         self._pattern_panel_d = PatternPanel("Pattern Δ/Ratio")
@@ -776,9 +936,44 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
                 "Pattern view. Use the toolbar overlay to zoom/pan (synced)."
             )
             panel.canvas().add_reset_callback(self._on_pattern_canvas_reset)
-        pattern_layout.addWidget(self._pattern_panel_a, stretch=1)
-        pattern_layout.addWidget(self._pattern_panel_b, stretch=1)
-        pattern_layout.addWidget(self._pattern_panel_d, stretch=1)
+        patterns_row.addWidget(self._pattern_panel_a, stretch=1)
+        patterns_row.addWidget(self._pattern_panel_b, stretch=1)
+        patterns_row.addWidget(self._pattern_panel_d, stretch=1)
+        pattern_layout.addLayout(patterns_row, stretch=3)
+
+        controls_row = QtWidgets.QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(10)
+        self._overlay_line_a_checkbox = QtWidgets.QCheckBox("Show band overlay (A)")
+        self._overlay_line_a_checkbox.setChecked(True)
+        self._overlay_line_b_checkbox = QtWidgets.QCheckBox("Show band overlay (B)")
+        self._overlay_line_b_checkbox.setChecked(True)
+        self._profile_normalize_checkbox = QtWidgets.QCheckBox("Normalize profiles")
+        self._profile_normalize_checkbox.setChecked(True)
+        self._profile_markers_checkbox = QtWidgets.QCheckBox("Show start/end markers")
+        self._profile_markers_checkbox.setChecked(True)
+        for checkbox in (
+            self._overlay_line_a_checkbox,
+            self._overlay_line_b_checkbox,
+            self._profile_normalize_checkbox,
+            self._profile_markers_checkbox,
+        ):
+            checkbox.stateChanged.connect(self._on_band_profile_settings_changed)
+        controls_row.addWidget(self._overlay_line_a_checkbox)
+        controls_row.addWidget(self._overlay_line_b_checkbox)
+        controls_row.addWidget(self._profile_normalize_checkbox)
+        controls_row.addWidget(self._profile_markers_checkbox)
+        controls_row.addStretch(1)
+        self._band_profile_status_label = QtWidgets.QLabel("")
+        self._band_profile_status_label.setStyleSheet("color: #606060;")
+        controls_row.addWidget(self._band_profile_status_label)
+        pattern_layout.addLayout(controls_row)
+
+        self._band_profile_plot = BandProfilePlot(logger=self._logger)
+        self._band_profile_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+        pattern_layout.addWidget(self._band_profile_plot, stretch=1)
         probe_layout.addWidget(pattern_group)
         probe_layout.setStretch(0, 1)
         probe_layout.setStretch(1, 3)
@@ -957,12 +1152,51 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._resolve_field_selection()
         self._populate_map_fields()
         self._select_pattern_field()
+        self._update_band_profile_feature_state()
         self._pattern_reset_view = True
         if hasattr(self, "_export_button"):
             self._export_button.setEnabled(True)
         self._update_maps()
         x, y = self._engine.default_probe_xy()
         self.set_selected_pixel(x, y, source="init")
+
+    def _update_band_profile_feature_state(self) -> None:
+        """Enable/disable band profile UI based on dataset availability."""
+
+        if self._scan_a is None or self._scan_b is None:
+            return
+        available_a = "band_profile" in self._scan_a.catalog.vectors
+        available_b = "band_profile" in self._scan_b.catalog.vectors
+        enabled = bool(available_a or available_b)
+        widgets = [
+            self._overlay_line_a_checkbox,
+            self._overlay_line_b_checkbox,
+            self._profile_normalize_checkbox,
+            self._profile_markers_checkbox,
+            self._band_profile_plot,
+        ]
+        for widget in widgets:
+            if widget is not None:
+                widget.setEnabled(enabled)
+        if not enabled:
+            if self._band_profile_plot is not None:
+                self._band_profile_plot.clear("band_profile not available in loaded scans.")
+            if self._band_profile_status_label is not None:
+                self._band_profile_status_label.setText("band_profile missing")
+            self._logger.warning(
+                "band_profile dataset not found in either scan; profile comparison disabled."
+            )
+            return
+        if not available_a or not available_b:
+            missing = []
+            if not available_a:
+                missing.append("A")
+            if not available_b:
+                missing.append("B")
+            message = f"band_profile missing in scan(s): {', '.join(missing)}"
+            if self._band_profile_status_label is not None:
+                self._band_profile_status_label.setText(message)
+            self._logger.warning(message)
 
     def save_screenshot(self, output_path: Path) -> None:
         """Save a screenshot of the current window.
@@ -1225,6 +1459,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             self._syncing_coords = False
         for panel in self._map_panels.values():
             panel.canvas().set_marker(state.x, state.y)
+        self._last_selected_xy = (state.x, state.y)
         self._update_probe(state.x, state.y)
         message = f"Selected X={state.x}, Y={state.y}."
         self.statusBar().showMessage(message, 5000)
@@ -1853,7 +2088,19 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
 
         if self._engine is None:
             return
-        scalar_fields = self._resolved_scalar_fields or self._engine.available_scalar_fields()
+        scalar_fields = list(self._resolved_scalar_fields or self._engine.available_scalar_fields())
+        if self._scan_a is not None and self._scan_b is not None:
+            common_scalars = set(self._scan_a.catalog.scalars) & set(self._scan_b.catalog.scalars)
+            for extra in (
+                "Band_Width",
+                "psnr",
+                "band_valid",
+                "band_start_idx",
+                "central_peak_idx",
+                "band_end_idx",
+            ):
+                if extra in common_scalars and extra not in scalar_fields:
+                    scalar_fields.append(extra)
         if not scalar_fields:
             self._probe_table.setRowCount(0)
             return
@@ -1877,6 +2124,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             )
         self._probe_table.resizeRowsToContents()
         self._update_patterns(x, y)
+        self._update_band_profile_panels(x, y)
 
     def _update_patterns(self, x: int, y: int) -> None:
         """Update the pattern panels for the given coordinate.
@@ -1933,6 +2181,148 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._log_pattern_update("A", pattern_a, x, y)
         self._log_pattern_update("B", pattern_b, x, y)
         self._log_pattern_update("D", pattern_d, x, y)
+
+    def _on_band_profile_settings_changed(self, _state: int = 0) -> None:
+        """Handle band profile display setting changes."""
+
+        if self._last_selected_xy is None:
+            return
+        x, y = self._last_selected_xy
+        self._update_band_profile_panels(x, y)
+
+    def _aligned_xy_for_scan_b(self, x: int, y: int) -> Optional[Tuple[int, int]]:
+        """Return scan-B coordinates aligned to a scan-A coordinate.
+
+        Parameters:
+            x: Column index in scan A.
+            y: Row index in scan A.
+
+        Returns:
+            Tuple (bx, by) in scan B indices, or None when outside bounds or unsupported.
+        """
+
+        if self._scan_b is None:
+            return None
+        if self._alignment_result is None:
+            return x, y
+        settings = alignment_settings_from_config(self._config.get("alignment", {}))
+        if settings.pattern_sampling != "nearest":
+            self._logger.warning(
+                "Unsupported alignment.pattern_sampling=%s for band profiles; expected 'nearest'.",
+                settings.pattern_sampling,
+            )
+            return None
+        inverse_point = self._alignment_result.transform.inverse(
+            np.array([[float(x), float(y)]])
+        )[0]
+        bx = float(inverse_point[0])
+        by = float(inverse_point[1])
+        if (
+            bx < 0
+            or by < 0
+            or bx > self._scan_b.nx - 1
+            or by > self._scan_b.ny - 1
+        ):
+            return None
+        bx_idx = int(round(bx))
+        by_idx = int(round(by))
+        if (
+            bx_idx < 0
+            or by_idx < 0
+            or bx_idx >= self._scan_b.nx
+            or by_idx >= self._scan_b.ny
+        ):
+            return None
+        return bx_idx, by_idx
+
+    def _update_band_profile_panels(self, x: int, y: int) -> None:
+        """Update band overlays and profile plots for the selected pixel.
+
+        Parameters:
+            x: Column index in scan A.
+            y: Row index in scan A.
+        """
+
+        if self._scan_a is None or self._scan_b is None:
+            return
+        if self._band_profile_plot is None:
+            return
+        normalize = bool(self._profile_normalize_checkbox and self._profile_normalize_checkbox.isChecked())
+        show_markers = bool(self._profile_markers_checkbox and self._profile_markers_checkbox.isChecked())
+        show_overlay_a = bool(self._overlay_line_a_checkbox and self._overlay_line_a_checkbox.isChecked())
+        show_overlay_b = bool(self._overlay_line_b_checkbox and self._overlay_line_b_checkbox.isChecked())
+
+        payload_a_raw = extract_band_profile_payload(self._scan_a, x, y, logger=self._logger)
+        payload_a = payload_a_raw if payload_a_raw.band_valid and payload_a_raw.profile is not None else None
+
+        bxby = self._aligned_xy_for_scan_b(x, y)
+        payload_b = None
+        payload_b_raw: Optional[BandProfilePayload] = None
+        if bxby is None:
+            self._logger.warning("Scan B band profile unavailable at aligned X=%s Y=%s.", x, y)
+        else:
+            bx, by = bxby
+            payload_b_raw = extract_band_profile_payload(self._scan_b, bx, by, logger=self._logger)
+            payload_b = payload_b_raw if payload_b_raw.band_valid and payload_b_raw.profile is not None else None
+
+        self._band_profile_plot.update_plot(
+            payload_a,
+            payload_b,
+            normalize=normalize,
+            show_markers=show_markers,
+        )
+
+        central_line_a = payload_a.central_line if payload_a is not None else None
+        self._update_pattern_overlay("A", central_line_a, show_overlay_a)
+        central_line_b = payload_b.central_line if payload_b is not None else None
+        if central_line_b is None and payload_b_raw is not None:
+            central_line_b = payload_b_raw.central_line
+        self._update_pattern_overlay("B", central_line_b, show_overlay_b)
+
+        status_parts: list[str] = []
+        if payload_a_raw.profile is None:
+            status_parts.append("A: band_profile unavailable")
+        elif payload_a is None:
+            status_parts.append("A: no valid band")
+        if bxby is None:
+            status_parts.append("B: out of bounds")
+        elif payload_b_raw is not None and payload_b_raw.profile is None:
+            status_parts.append("B: band_profile unavailable")
+        elif payload_b is None:
+            status_parts.append("B: no valid band")
+        if bxby is not None and self._alignment_result is not None:
+            status_parts.append(f"B@({bxby[0]},{bxby[1]})")
+        status_text = " | ".join(status_parts)
+        if self._band_profile_status_label is not None:
+            self._band_profile_status_label.setText(status_text)
+
+    def _update_pattern_overlay(
+        self,
+        label: str,
+        central_line: Optional[np.ndarray],
+        show_overlay: bool,
+    ) -> None:
+        """Update the band overlay line on a pattern panel.
+
+        Parameters:
+            label: Pattern label ("A" or "B").
+            central_line: Optional central line vector.
+            show_overlay: Whether to show the overlay line.
+        """
+
+        panel = self._pattern_panels.get(label)
+        if panel is None:
+            return
+        canvas = panel.canvas()
+        if not show_overlay or central_line is None:
+            canvas.clear_overlay_line()
+            return
+        line = np.asarray(central_line, dtype=np.float32).ravel()
+        if line.size < 4 or not np.isfinite(line[:4]).all():
+            canvas.clear_overlay_line()
+            self._logger.debug("central_line unavailable for pattern %s at current selection.", label)
+            return
+        canvas.set_overlay_line(float(line[0]), float(line[1]), float(line[2]), float(line[3]))
 
     def _log_pattern_update(
         self, label: str, pattern: Optional[np.ndarray], x: int, y: int

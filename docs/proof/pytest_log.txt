@@ -1,0 +1,37 @@
+..............................                                           [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/rsciio/utils/rgb_tools.py:46
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/rgb_tools.py:46: VisibleDeprecationWarning: The module `rsciio.utils.rgb_tools` has been renamed to `rsciio.utils.rgb` and it will be removed in version 1.0.
+    warnings.warn(
+
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93: VisibleDeprecationWarning: get_file_handle has been moved to `rsciio.utils.file` and will be removed from `rsciio.utils.tools` in version 1.0.
+    warnings.warn(message, VisibleDeprecationWarning)
+
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93: VisibleDeprecationWarning: ensure_directory has been moved to `rsciio.utils.path` and will be removed from `rsciio.utils.tools` in version 1.0.
+    warnings.warn(message, VisibleDeprecationWarning)
+
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93: VisibleDeprecationWarning: append2pathname has been moved to `rsciio.utils.path` and will be removed from `rsciio.utils.tools` in version 1.0.
+    warnings.warn(message, VisibleDeprecationWarning)
+
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93: VisibleDeprecationWarning: incremental_filename has been moved to `rsciio.utils.path` and will be removed from `rsciio.utils.tools` in version 1.0.
+    warnings.warn(message, VisibleDeprecationWarning)
+
+.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/tools.py:93: VisibleDeprecationWarning: overwrite has been moved to `rsciio.utils.path` and will be removed from `rsciio.utils.tools` in version 1.0.
+    warnings.warn(message, VisibleDeprecationWarning)
+
+.venv/lib/python3.12/site-packages/hyperspy/model.py:32
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/hyperspy/model.py:32: DeprecationWarning: `scipy.odr` is deprecated as of version 1.17.0 and will be removed in SciPy 1.19.0. Please use `https://pypi.org/project/odrpack/` instead.
+    import scipy.odr as odr
+
+.venv/lib/python3.12/site-packages/rsciio/utils/rgb_tools.py:62
+  /home/kvmani/kikuchiBandAnalyzer/.venv/lib/python3.12/site-packages/rsciio/utils/rgb_tools.py:62: VisibleDeprecationWarning: The module `rsciio.utils.rgb_tools` has been renamed to `rsciio.utils.rgb` and it will be removed in version 1.0. Use `RGB_DTYPES` instead
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+30 passed, 9 warnings in 3.19s

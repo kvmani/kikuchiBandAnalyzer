@@ -32,14 +32,23 @@ def create_simulated_oh5(output_path: Path, logger: logging.Logger) -> None:
     """
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    nx = 2
+    ny = 2
+    pattern_h = 64
+    pattern_w = 64
+    profile_len = 64
+    n_pixels = nx * ny
+    rng = np.random.default_rng(123)
     with h5py.File(output_path, "w") as handle:
         handle.create_dataset("Manufacturer", data="Debug")
         handle.create_dataset("Version", data="1.0")
         scan = handle.create_group("DebugScan")
         ebsd = scan.create_group("EBSD")
         header = ebsd.create_group("Header")
-        header.create_dataset("nColumns", data=np.array([2]))
-        header.create_dataset("nRows", data=np.array([2]))
+        header.create_dataset("nColumns", data=np.array([nx]))
+        header.create_dataset("nRows", data=np.array([ny]))
+        header.create_dataset("Pattern Height", data=np.array([pattern_h]))
+        header.create_dataset("Pattern Width", data=np.array([pattern_w]))
         data_group = ebsd.create_group("Data")
         data_group.create_dataset(
             "IQ", data=np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
@@ -47,6 +56,39 @@ def create_simulated_oh5(output_path: Path, logger: logging.Logger) -> None:
         data_group.create_dataset(
             "CI", data=np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float32)
         )
+        yy, xx = np.mgrid[0:pattern_h, 0:pattern_w]
+        base_pattern = (
+            np.exp(-((xx - pattern_w / 2) ** 2 + (yy - pattern_h / 2) ** 2) / (2 * (pattern_w / 6) ** 2))
+            + 0.2 * np.sin(xx / 5.0)
+        ).astype(np.float32)
+        patterns = np.stack(
+            [base_pattern + rng.normal(0.0, 0.02, size=base_pattern.shape).astype(np.float32) for _ in range(n_pixels)],
+            axis=0,
+        )
+        data_group.create_dataset("Pattern", data=patterns)
+
+        x_prof = np.arange(profile_len, dtype=np.float32)
+        peak_idx = profile_len // 2
+        profile = np.exp(-((x_prof - peak_idx) ** 2) / (2 * (profile_len / 10) ** 2)).astype(np.float32)
+        profile += 0.05 * rng.normal(0.0, 1.0, size=profile.shape).astype(np.float32)
+        profile = np.clip(profile, 0.0, None)
+        band_profiles = np.tile(profile[None, :], (n_pixels, 1)).astype(np.float32)
+        data_group.create_dataset("band_profile", data=band_profiles)
+        central_lines = np.tile(
+            np.array([10.0, 10.0, 52.0, 52.0], dtype=np.float32)[None, :],
+            (n_pixels, 1),
+        )
+        data_group.create_dataset("central_line", data=central_lines)
+        start_idx = np.full(n_pixels, int(profile_len * 0.25), dtype=np.int32)
+        end_idx = np.full(n_pixels, int(profile_len * 0.75), dtype=np.int32)
+        peak_idx_arr = np.full(n_pixels, int(peak_idx), dtype=np.int32)
+        profile_len_arr = np.full(n_pixels, int(profile_len), dtype=np.int32)
+        band_valid = np.ones(n_pixels, dtype=np.int8)
+        data_group.create_dataset("band_start_idx", data=start_idx)
+        data_group.create_dataset("band_end_idx", data=end_idx)
+        data_group.create_dataset("central_peak_idx", data=peak_idx_arr)
+        data_group.create_dataset("profile_length", data=profile_len_arr)
+        data_group.create_dataset("band_valid", data=band_valid)
     logger.debug("Created simulated OH5 at %s", output_path)
 
 
@@ -107,12 +149,12 @@ def _prepare_paths(
         generator = NoisyOh5Generator(
             input_path=scan_a,
             output_path=scan_b,
-            sigma_map={"IQ": 0.05, "CI": 0.02},
+            sigma_map={"IQ": 0.05, "CI": 0.02, "band_profile": 0.01},
             seed=123,
             logger=logger,
         )
         generator.run()
-        screenshot_path = Path("tmp/debug_ebsd_compare_gui_proof.png")
+        screenshot_path = Path("docs/screenshots/ebsd_compare_band_profile_proof.png")
         return scan_a, scan_b, screenshot_path
     demo = _load_demo_config(config_path)
     scan_a = Path(demo.get("scan_a", "testData/Test_Ti.oh5"))

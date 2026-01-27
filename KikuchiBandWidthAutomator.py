@@ -149,8 +149,17 @@ class BandWidthAutomator:
             plt.show()
 
     # ------------------------------------------------------------------
-    def detect_band_widths(self):
-        """Run the :class:`KikuchiBatchProcessor` over all patterns."""
+    def detect_band_widths(self, progress_callback=None, cancel_callback=None):
+        """Run the :class:`KikuchiBatchProcessor` over all patterns.
+
+        Parameters:
+            progress_callback: Optional callback invoked after each processed pixel.
+                Signature: (row, col, processed_count, total_count, entry) -> None.
+            cancel_callback: Optional callable returning True when cancellation is requested.
+
+        Returns:
+            List of processed pixel entries.
+        """
         desired_hkl = self.config.get("desired_hkl", "1,1,1")
         ebsd_data = self.dataset.data
         processor = KikuchiBatchProcessor(
@@ -159,7 +168,10 @@ class BandWidthAutomator:
             config=self.config,
             desired_hkl=desired_hkl,
         )
-        return processor.process()
+        return processor.process(
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+        )
 
     # ------------------------------------------------------------------
     def _select_best_band(self, bands, pixel_index):
@@ -268,6 +280,53 @@ class BandWidthAutomator:
             line_arr = line_arr[:4]
         return line_arr.astype(np.float32)
 
+    def _coerce_index(
+        self,
+        value,
+        *,
+        name: str,
+        default: int,
+        max_length: int,
+        pixel_index: int,
+    ) -> int:
+        """
+        Coerce a band profile index into a safe integer for HDF5 storage.
+
+        Parameters:
+            value: Raw index value (int-like) or None.
+            name: Name of the index field (for logging).
+            default: Default sentinel value to use when missing/invalid.
+            max_length: Exclusive upper bound for valid indices.
+            pixel_index: Linear pixel index for logging context.
+
+        Returns:
+            Integer index value, or ``default`` when invalid.
+        """
+        if value is None:
+            return default
+        try:
+            index_value = int(value)
+        except (TypeError, ValueError):
+            logging.warning(
+                "Invalid %s=%r at pixel %d; storing %d.",
+                name,
+                value,
+                pixel_index,
+                default,
+            )
+            return default
+        if index_value < 0 or index_value >= max_length:
+            logging.warning(
+                "%s=%d out of range [0, %d) at pixel %d; storing %d.",
+                name,
+                index_value,
+                max_length,
+                pixel_index,
+                default,
+            )
+            return default
+        return index_value
+
     def _write_dataset(self, h5file, dataset_path, data, attrs=None):
         """
         Write an HDF5 dataset, replacing any existing dataset.
@@ -327,6 +386,11 @@ class BandWidthAutomator:
             n_pixels = len(ci_data)
             band_profile_array = np.full((n_pixels, profile_length), np.nan, dtype="float32")
             central_line_array = np.full((n_pixels, 4), np.nan, dtype="float32")
+            band_start_idx_array = np.full(n_pixels, -1, dtype="int32")
+            band_end_idx_array = np.full(n_pixels, -1, dtype="int32")
+            central_peak_idx_array = np.full(n_pixels, -1, dtype="int32")
+            profile_length_array = np.full(n_pixels, profile_length, dtype="int32")
+            band_valid_array = np.zeros(n_pixels, dtype="int8")
 
             band_width_array = np.zeros_like(ci_data, dtype="float32")
             psnr_array = np.zeros_like(ci_data, dtype="float32")
@@ -362,6 +426,51 @@ class BandWidthAutomator:
                 central_line_array[idx] = self._coerce_central_line(
                     best_band.get("central_line"), idx
                 )
+                band_valid_array[idx] = 1
+
+                expected_len = int(best_band.get("profile_length", profile_length))
+                if expected_len != profile_length:
+                    logging.warning(
+                        "profile_length mismatch at pixel %d: band=%d config=%d; storing config value.",
+                        idx,
+                        expected_len,
+                        profile_length,
+                    )
+
+                band_start_idx_array[idx] = self._coerce_index(
+                    best_band.get("band_start_idx", best_band.get("bandStart")),
+                    name="band_start_idx",
+                    default=-1,
+                    max_length=profile_length,
+                    pixel_index=idx,
+                )
+                band_end_idx_array[idx] = self._coerce_index(
+                    best_band.get("band_end_idx", best_band.get("bandEnd")),
+                    name="band_end_idx",
+                    default=-1,
+                    max_length=profile_length,
+                    pixel_index=idx,
+                )
+                central_peak_idx_array[idx] = self._coerce_index(
+                    best_band.get("central_peak_idx", best_band.get("centralPeak")),
+                    name="central_peak_idx",
+                    default=-1,
+                    max_length=profile_length,
+                    pixel_index=idx,
+                )
+                if (
+                    band_start_idx_array[idx] != -1
+                    and band_end_idx_array[idx] != -1
+                    and band_start_idx_array[idx] >= band_end_idx_array[idx]
+                ):
+                    logging.warning(
+                        "band_start_idx (%d) >= band_end_idx (%d) at pixel %d; resetting indices to -1.",
+                        band_start_idx_array[idx],
+                        band_end_idx_array[idx],
+                        idx,
+                    )
+                    band_start_idx_array[idx] = -1
+                    band_end_idx_array[idx] = -1
 
             desired_ref_width = self.config["desired_hkl_ref_width"]
             if desired_ref_width == 0:
@@ -436,9 +545,65 @@ class BandWidthAutomator:
                     "units": "pixel",
                 },
             )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/band_start_idx",
+                band_start_idx_array,
+                attrs={
+                    "description": "Left local minimum index in band_profile used for bandwidth calculation (-1 when unavailable).",
+                    "units": "index",
+                },
+            )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/band_end_idx",
+                band_end_idx_array,
+                attrs={
+                    "description": "Right local minimum index in band_profile used for bandwidth calculation (-1 when unavailable).",
+                    "units": "index",
+                },
+            )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/central_peak_idx",
+                central_peak_idx_array,
+                attrs={
+                    "description": "Central peak index in band_profile used to split minima search (-1 when unavailable).",
+                    "units": "index",
+                },
+            )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/profile_length",
+                profile_length_array,
+                attrs={
+                    "description": "Expected length of band_profile vector (rectWidth*4).",
+                    "units": "samples",
+                },
+            )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/band_valid",
+                band_valid_array,
+                attrs={
+                    "description": "1 when a valid best-band profile was stored for the pixel; 0 otherwise.",
+                },
+            )
             logging.info(
                 "Wrote HDF5 outputs: %s.",
-                ", ".join(list(base_outputs.keys()) + list(derived_outputs.keys()) + ["band_profile", "central_line"]),
+                ", ".join(
+                    list(base_outputs.keys())
+                    + list(derived_outputs.keys())
+                    + [
+                        "band_profile",
+                        "central_line",
+                        "band_start_idx",
+                        "band_end_idx",
+                        "central_peak_idx",
+                        "profile_length",
+                        "band_valid",
+                    ]
+                ),
             )
 
             logging.info(

@@ -60,5 +60,18 @@ class ScanFileReader(ABC):
         """
 
     @abstractmethod
+    def get_vector(self, field_name: str, x: int, y: int) -> Optional[np.ndarray]:
+        """Return a vector value at the specified coordinate.
+
+        Parameters:
+            field_name: Name of the vector field.
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            1D NumPy array for the vector value, or None if unavailable.
+        """
+
+    @abstractmethod
     def close(self) -> None:
         """Release any open resources."""

@@ -5,12 +5,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 import matplotlib.ticker as ticker  # Import ticker for minor ticks
-from distutils.util import strtobool
 
 
 def gaussian(x, amp, mean, stddev):
     """Gaussian function for fitting."""
     return amp * np.exp(-((x - mean) ** 2) / (2 * stddev ** 2))
+
+def strtobool(value):
+    """Convert a string-like truth value to bool.
+
+    This is a lightweight replacement for ``distutils.util.strtobool`` which was
+    removed from the Python 3.12 standard library.
+
+    Parameters:
+        value: Input value (string/int/bool).
+
+    Returns:
+        True or False.
+
+    Raises:
+        ValueError: If the input cannot be interpreted as a boolean.
+    """
+
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "y", "yes", "t", "true", "on"}:
+        return True
+    if text in {"0", "n", "no", "f", "false", "off"}:
+        return False
+    raise ValueError(f"Invalid truth value: {value!r}")
 
 class LineTrimmer:
     def __init__(self, image_width, image_height):
@@ -449,7 +473,9 @@ class RectangularAreaBandDetector:
         """
         Detect edges on the intensity profile using minima detection and calculate PSNR.
         :param profile: 1D intensity profile.
-        :return: Indices of band start (left_min), band end (right_min), central peak, PSNR, defficientLineIntensity and efficientlineIntensity.
+        :return: Dictionary containing band start/end indices, central peak index, PSNR, intensity metrics,
+            and convenience aliases ``band_start_idx``/``band_end_idx``/``central_peak_idx`` for downstream
+            consumers. When a band is invalid, the ``*_idx`` entries are set to -1.
         """
         band_valid = False
         smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
@@ -486,12 +512,26 @@ class RectangularAreaBandDetector:
             f"Central peak detected at: {central_peak_index}, with band start at {left_min_index} and end at {right_min_index}")
         logging.debug(f"PSNR value: {psnr_value}, Efficient Line Intensity: {efficientlineIntensity} , Defficient Line Intensity: {defficientlineIntensity}")
 
+        profile_length = int(smoothed_profile.size)
+        if band_valid:
+            band_start_idx = int(left_min_index)
+            band_end_idx = int(right_min_index)
+            central_peak_idx = int(central_peak_index)
+        else:
+            band_start_idx = -1
+            band_end_idx = -1
+            central_peak_idx = -1
+
         return {
             "band_peak": peak_max,
             "band_bkg": noise_average,
             "bandStart": left_min_index,
             "bandEnd": right_min_index,
             "centralPeak": central_peak_index,
+            "band_start_idx": band_start_idx,
+            "band_end_idx": band_end_idx,
+            "central_peak_idx": central_peak_idx,
+            "profile_length": profile_length,
             "psnr": psnr_value,
             "band_valid": band_valid,
             "efficientlineIntensity": efficientlineIntensity,

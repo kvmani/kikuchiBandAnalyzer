@@ -80,6 +80,10 @@ def test_save_results_to_json_includes_band_profile(tmp_path) -> None:
                     "psnr": 2.0,
                     "band_profile": np.array([0.1, 0.2, 0.3], dtype=np.float32),
                     "central_line": [1.0, 2.0, 3.0, 4.0],
+                    "band_start_idx": 0,
+                    "central_peak_idx": 1,
+                    "band_end_idx": 2,
+                    "profile_length": 3,
                     "band_valid": True,
                 }
             ],
@@ -91,6 +95,10 @@ def test_save_results_to_json_includes_band_profile(tmp_path) -> None:
     band_profile = data[0]["bands"][0]["band_profile"]
     assert np.allclose(band_profile, [0.1, 0.2, 0.3])
     assert data[0]["bands"][0]["central_line"] == [1.0, 2.0, 3.0, 4.0]
+    assert data[0]["bands"][0]["band_start_idx"] == 0
+    assert data[0]["bands"][0]["central_peak_idx"] == 1
+    assert data[0]["bands"][0]["band_end_idx"] == 2
+    assert data[0]["bands"][0]["profile_length"] == 3
 
 
 def test_prepare_json_input_handles_optional_pattern_path(tmp_path) -> None:
@@ -196,12 +204,20 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
                     "defficientlineIntensity": 0.5,
                     "band_profile": [1.0] * 8,
                     "central_line": [1.0, 2.0, 3.0, 4.0],
+                    "band_start_idx": 2,
+                    "central_peak_idx": 3,
+                    "band_end_idx": 6,
+                    "profile_length": 8,
                 },
                 {
                     "band_valid": True,
                     "psnr": 2.0,
                     "band_profile": [9.0] * 8,
                     "central_line": [9.0, 9.0, 9.0, 9.0],
+                    "band_start_idx": 0,
+                    "central_peak_idx": 1,
+                    "band_end_idx": 7,
+                    "profile_length": 8,
                 },
             ],
         },
@@ -213,6 +229,11 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
     with h5py.File(h5_path, "r") as handle:
         profile = handle[f"/{scan_name}/EBSD/Data/band_profile"][()]
         central = handle[f"/{scan_name}/EBSD/Data/central_line"][()]
+        start_idx = handle[f"/{scan_name}/EBSD/Data/band_start_idx"][()]
+        end_idx = handle[f"/{scan_name}/EBSD/Data/band_end_idx"][()]
+        peak_idx = handle[f"/{scan_name}/EBSD/Data/central_peak_idx"][()]
+        profile_len = handle[f"/{scan_name}/EBSD/Data/profile_length"][()]
+        band_valid = handle[f"/{scan_name}/EBSD/Data/band_valid"][()]
 
     assert profile.shape == (n_pixels, 8)
     assert profile.dtype == np.float32
@@ -220,3 +241,13 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
     assert np.isnan(profile[1]).all()
     assert central.shape == (n_pixels, 4)
     assert np.allclose(central[0], np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    assert start_idx.dtype == np.int32
+    assert end_idx.dtype == np.int32
+    assert peak_idx.dtype == np.int32
+    assert profile_len.dtype == np.int32
+    assert band_valid.dtype == np.int8
+    assert start_idx.tolist() == [2, -1]
+    assert end_idx.tolist() == [6, -1]
+    assert peak_idx.tolist() == [3, -1]
+    assert profile_len.tolist() == [8, 8]
+    assert band_valid.tolist() == [1, 0]

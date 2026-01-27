@@ -29,7 +29,7 @@ def _make_catalog(scalars: list[str], patterns: list[str]) -> FieldCatalog:
         name: FieldRef(name=name, path=f"/{name}", kind="pattern", shape=(2, 2, 2), dtype="float32")
         for name in patterns
     }
-    return FieldCatalog(scalars=scalar_refs, patterns=pattern_refs)
+    return FieldCatalog(scalars=scalar_refs, vectors={}, patterns=pattern_refs)
 
 
 def test_resolve_scalar_fields_prefers_fields_list() -> None:
