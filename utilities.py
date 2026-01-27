@@ -389,6 +389,15 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
 
 
 def convert_results(obj):
+    """
+    Recursively convert numpy scalars/arrays into JSON-serializable types.
+
+    Parameters:
+        obj: Object to convert (dict, list, numpy scalar/array, or primitive).
+
+    Returns:
+        JSON-serializable object.
+    """
     if isinstance(obj, dict):
         return {k: convert_results(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -401,6 +410,16 @@ def convert_results(obj):
 
 
 def save_results_to_json(results, path="bandOutputData.json"):
+    """
+    Serialize detection results to a JSON file.
+
+    Parameters:
+        results: Results list/dict to serialize.
+        path: Destination JSON path.
+
+    Returns:
+        None.
+    """
     with open(path, "w") as f:
         json.dump(convert_results(results), f, indent=4)
     logging.info("Results saved to %s", path)

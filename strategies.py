@@ -113,6 +113,35 @@ class RectangularAreaBandDetector:
         self.defficientlineIntensity = 0
         self.band_valid=False
 
+    def _build_band_profile(self, profile, expected_length):
+        """
+        Sanitize and resize a band profile to the expected length.
+
+        Parameters:
+            profile: Raw summed intensity profile.
+            expected_length: Expected profile length after resizing.
+
+        Returns:
+            List of floats with length equal to expected_length.
+        """
+        if expected_length <= 0:
+            raise ValueError("Expected band profile length must be positive.")
+        if profile is None or len(profile) == 0:
+            logging.warning("Empty band profile detected; filling with zeros.")
+            return [0.0] * expected_length
+
+        profile_arr = np.asarray(profile, dtype=np.float32)
+        if not np.all(np.isfinite(profile_arr)):
+            logging.warning("Non-finite values detected in band profile; replacing with zeros.")
+            profile_arr = np.nan_to_num(profile_arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if profile_arr.size < expected_length:
+            profile_arr = np.pad(profile_arr, (0, expected_length - profile_arr.size), mode="constant")
+        elif profile_arr.size > expected_length:
+            profile_arr = profile_arr[:expected_length]
+
+        return profile_arr.astype(float).tolist()
+
 
     def _trim_line_to_image_bounds(self, x1, y1, x2, y2):
         """
@@ -186,11 +215,13 @@ class RectangularAreaBandDetector:
         x1, y1, x2, y2 = trimmer._trim_line_to_circle(x1, y1, x2, y2)
         self.central_line = [x1, y1, x2, y2]
         rect_width = self.config.get('rectWidth', 20)
+        expected_profile_length = int(rect_width * 4)
 
         logging.debug(f"Central line: {self.central_line}, Rectangle width: {rect_width}")
 
         rect_area, rotated_image, rect_corners = self.extract_rotated_rectangle(x1, y1, x2, y2, rect_width)
         summed_profile = np.sum(self.sample_intensities(rect_area), axis=0)
+        band_profile = self._build_band_profile(summed_profile, expected_profile_length)
 
         result = self.detect_edges(summed_profile)
         result["central_line"] = self.central_line
@@ -239,7 +270,8 @@ class RectangularAreaBandDetector:
             "band_valid": band_valid,
             "psnr": self.psnr,
             "efficientlineIntensity": self.efficientlineIntensity, # Newly added to final output
-            "defficientlineIntensity": self.defficientlineIntensity  # Newly added to final output
+            "defficientlineIntensity": self.defficientlineIntensity,  # Newly added to final output
+            "band_profile": band_profile,
         }
 
         return final_result
@@ -440,9 +472,9 @@ class RectangularAreaBandDetector:
 
             noise_average = (left_min + right_min) / 2
 
-            if noise_average != 0:
+            if noise_average != 0 and np.isfinite(noise_average):
                 psnr_value = peak_max / noise_average
-                if psnr_value > self.config["min_psnr"]:
+                if np.isfinite(psnr_value) and psnr_value > self.config["min_psnr"]:
                     band_valid = True
             else:
                 psnr_value = 0

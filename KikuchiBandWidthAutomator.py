@@ -162,6 +162,130 @@ class BandWidthAutomator:
         return processor.process()
 
     # ------------------------------------------------------------------
+    def _select_best_band(self, bands, pixel_index):
+        """
+        Select the best band for a pixel based on PSNR.
+
+        Parameters:
+            bands: List of band dictionaries.
+            pixel_index: Linear pixel index for logging context.
+
+        Returns:
+            Selected band dictionary or None if no valid bands are found.
+        """
+        valid_bands = []
+        for band in bands or []:
+            if not band.get("band_valid", False):
+                continue
+            psnr = band.get("psnr", 0)
+            if psnr is None or not np.isfinite(psnr):
+                continue
+            valid_bands.append(band)
+
+        if not valid_bands:
+            return None
+
+        psnr_values = [band.get("psnr", 0) for band in valid_bands]
+        max_psnr = max(psnr_values)
+        matches = [band for band in valid_bands if band.get("psnr", 0) == max_psnr]
+        if len(matches) > 1:
+            logging.warning(
+                "Multiple bands share PSNR %.3f at pixel %d; selecting first match.",
+                max_psnr,
+                pixel_index,
+            )
+        return matches[0]
+
+    def _coerce_profile(self, profile, expected_length, pixel_index):
+        """
+        Coerce a band profile into a fixed-length numpy array.
+
+        Parameters:
+            profile: Raw profile list/array.
+            expected_length: Target length for the profile vector.
+            pixel_index: Linear pixel index for logging context.
+
+        Returns:
+            NumPy array of shape (expected_length,).
+        """
+        if expected_length <= 0:
+            raise ValueError("Band profile length must be positive.")
+        if profile is None:
+            logging.warning("Missing band profile at pixel %d; filling with NaNs.", pixel_index)
+            return np.full(expected_length, np.nan, dtype=np.float32)
+
+        profile_arr = np.asarray(profile, dtype=np.float32).ravel()
+        if profile_arr.size < expected_length:
+            logging.warning(
+                "Band profile length %d < %d at pixel %d; padding with zeros.",
+                profile_arr.size,
+                expected_length,
+                pixel_index,
+            )
+            profile_arr = np.pad(profile_arr, (0, expected_length - profile_arr.size), mode="constant")
+        elif profile_arr.size > expected_length:
+            logging.warning(
+                "Band profile length %d > %d at pixel %d; truncating.",
+                profile_arr.size,
+                expected_length,
+                pixel_index,
+            )
+            profile_arr = profile_arr[:expected_length]
+
+        if not np.all(np.isfinite(profile_arr)):
+            logging.warning("Non-finite values in band profile at pixel %d; replacing with zeros.", pixel_index)
+            profile_arr = np.nan_to_num(profile_arr, nan=0.0, posinf=0.0, neginf=0.0)
+        return profile_arr.astype(np.float32)
+
+    def _coerce_central_line(self, central_line, pixel_index):
+        """
+        Coerce a central line into a fixed-length numpy array.
+
+        Parameters:
+            central_line: Raw central line list/array.
+            pixel_index: Linear pixel index for logging context.
+
+        Returns:
+            NumPy array of shape (4,).
+        """
+        if central_line is None:
+            logging.warning("Missing central_line at pixel %d; filling with NaNs.", pixel_index)
+            return np.full(4, np.nan, dtype=np.float32)
+        line_arr = np.asarray(central_line, dtype=np.float32).ravel()
+        if line_arr.size < 4:
+            logging.warning(
+                "central_line length %d < 4 at pixel %d; padding with NaNs.",
+                line_arr.size,
+                pixel_index,
+            )
+            line_arr = np.pad(line_arr, (0, 4 - line_arr.size), mode="constant", constant_values=np.nan)
+        elif line_arr.size > 4:
+            logging.warning(
+                "central_line length %d > 4 at pixel %d; truncating.",
+                line_arr.size,
+                pixel_index,
+            )
+            line_arr = line_arr[:4]
+        return line_arr.astype(np.float32)
+
+    def _write_dataset(self, h5file, dataset_path, data, attrs=None):
+        """
+        Write an HDF5 dataset, replacing any existing dataset.
+
+        Parameters:
+            h5file: Open HDF5 file handle.
+            dataset_path: Path for the dataset.
+            data: Array data to store.
+            attrs: Optional attribute dictionary.
+
+        Returns:
+            The created HDF5 dataset.
+        """
+        if dataset_path in h5file:
+            del h5file[dataset_path]
+        return write_hdf5_dataset(h5file, dataset_path, data, attrs=attrs)
+
+    # ------------------------------------------------------------------
     def export_results(self, processed):
         """Export CSV summaries and write results back into the HDF5 file."""
         output_csv_path = self.output_dir / f"{self.base_name}_bandOutputData.csv"
@@ -196,6 +320,14 @@ class BandWidthAutomator:
                 logging.error("Maximum index in 'Ind' exceeds CI dataset length.")
                 return
 
+            profile_length = int(self.config.get("rectWidth", 20) * 4)
+            if profile_length <= 0:
+                logging.error("Invalid band profile length: %d", profile_length)
+                return
+            n_pixels = len(ci_data)
+            band_profile_array = np.full((n_pixels, profile_length), np.nan, dtype="float32")
+            central_line_array = np.full((n_pixels, 4), np.nan, dtype="float32")
+
             band_width_array = np.zeros_like(ci_data, dtype="float32")
             psnr_array = np.zeros_like(ci_data, dtype="float32")
             efficientIntensity_array = np.zeros_like(ci_data, dtype="float32")
@@ -216,7 +348,25 @@ class BandWidthAutomator:
                 defficientIntensity_array[idx] = deffI
                 eff_ratio_array[idx] = ratio
 
+            for entry in processed:
+                idx = entry.get("ind")
+                if idx is None or idx >= n_pixels:
+                    logging.warning("Skipping band profile for invalid index: %s", idx)
+                    continue
+                best_band = self._select_best_band(entry.get("bands", []), idx)
+                if best_band is None:
+                    continue
+                band_profile_array[idx] = self._coerce_profile(
+                    best_band.get("band_profile"), profile_length, idx
+                )
+                central_line_array[idx] = self._coerce_central_line(
+                    best_band.get("central_line"), idx
+                )
+
             desired_ref_width = self.config["desired_hkl_ref_width"]
+            if desired_ref_width == 0:
+                logging.error("desired_hkl_ref_width is zero; cannot compute strain.")
+                return
             band_strain_array = (band_width_array - desired_ref_width) / desired_ref_width
             elastic_modulus = float(self.config["elastic_modulus"])
             band_stress_array = band_strain_array * elastic_modulus
@@ -268,9 +418,27 @@ class BandWidthAutomator:
                 write_hdf5_dataset(
                     h5file, f"{data_root}/{dataset_name}", data, attrs=attrs
                 )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/band_profile",
+                band_profile_array,
+                attrs={
+                    "description": "Summed band intensity profile (rectWidth*4 samples)",
+                    "units": "arb. intensity",
+                },
+            )
+            self._write_dataset(
+                h5file,
+                f"{data_root}/central_line",
+                central_line_array,
+                attrs={
+                    "description": "Band central line endpoints [x1, y1, x2, y2]",
+                    "units": "pixel",
+                },
+            )
             logging.info(
                 "Wrote HDF5 outputs: %s.",
-                ", ".join(list(base_outputs.keys()) + list(derived_outputs.keys())),
+                ", ".join(list(base_outputs.keys()) + list(derived_outputs.keys()) + ["band_profile", "central_line"]),
             )
 
             logging.info(
