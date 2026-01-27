@@ -144,7 +144,14 @@ class KikuchiBatchProcessor:
     def process_kikuchi_image_at_pixel(self, row, col, json_entry):
         """Process a single image from the EBSD grid."""
         image = self.ebsd_data[row, col]
-        points = json_entry["points"]
+        points = json_entry.get("points", [])
+        if not isinstance(points, list):
+            logging.warning(
+                "Malformed points list for pixel (%d, %d); defaulting to empty list.",
+                row,
+                col,
+            )
+            points = []
         bdet = BandDetector(
             image=image,
             points=points,
@@ -163,6 +170,8 @@ class KikuchiBatchProcessor:
             "x,y": [row, col],
             "ind": row * self.ebsd_data.shape[1] + col,
         })
+        if "pattern_path" in json_entry:
+            entry["pattern_path"] = json_entry["pattern_path"]
         return entry
 
     def _process_serial(self):
@@ -253,17 +262,53 @@ def load_ebsd_data(source: str, tile_rows: int = 10, tile_cols: int = 10):
     raise ValueError("source must be folder, *.png / *.bmp, or *.npy.")
 
 # ──────────────────────────────────────────────────────────────────────────────
+def _validate_json_entry(entry: Dict[str, Any], index: int) -> None:
+    """
+    Validate a single JSON annotation entry.
+
+    Parameters:
+        entry: JSON entry containing at least a "points" list.
+        index: Position of the entry within the JSON list.
+
+    Returns:
+        None.
+    """
+    if not isinstance(entry, dict):
+        raise ValueError(f"JSON entry {index} must be a dictionary.")
+    if "points" not in entry:
+        raise ValueError(f"JSON entry {index} missing required 'points' field.")
+    if not isinstance(entry["points"], list):
+        raise ValueError(f"JSON entry {index} has malformed 'points' field.")
+    if "pattern_path" in entry and not isinstance(entry["pattern_path"], str):
+        raise ValueError(f"JSON entry {index} has non-string 'pattern_path'.")
+
+
 def prepare_json_input(path: str, n_patterns: int, tile_from_single: bool):
     """Load JSON annotation file and repeat entries if required."""
-    with open(path) as f:
-        data = json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Malformed JSON file: {path}") from exc
+
     if tile_from_single:
-        base = data[0] if isinstance(data, list) else data
+        if isinstance(data, list):
+            if not data:
+                raise ValueError("JSON list is empty; cannot tile entries.")
+            base = data[0]
+        elif isinstance(data, dict):
+            base = data
+        else:
+            raise TypeError("JSON must be a list or object when tiling from a single entry.")
+        _validate_json_entry(base, 0)
         return [copy.deepcopy(base) for _ in range(n_patterns)]
+
     if not isinstance(data, list):
         raise TypeError("JSON must be a list when loading from folder.")
     if len(data) != n_patterns:
         raise ValueError(f"JSON {len(data)} entries ≠ patterns {n_patterns}.")
+    for idx, entry in enumerate(data):
+        _validate_json_entry(entry, idx)
     return data
 
 # ──────────────────────────────────────────────────────────────────────────────

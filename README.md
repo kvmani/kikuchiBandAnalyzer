@@ -85,7 +85,7 @@ For an input file `<stem>.oh5`/`<stem>.h5`, the pipeline writes outputs next to 
   - `<stem>_filtered_band_data.csv`
 - An augmented HDF5 copy:
   - `<stem>_modified.h5`
-  - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `band_intensity_ratio`, `band_intensity_diff_norm`, `strain`, `stress`, …).
+  - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `band_intensity_ratio`, `band_intensity_diff_norm`, `band_profile`, `central_line`, `strain`, `stress`, …).
 - Derived `.ang` files with additional columns:
   - `<stem>_modified_<suffix>.ang`
 
@@ -96,6 +96,9 @@ Notes:
 Derived field definitions:
 - `band_intensity_ratio = I_eff / I_def`
 - `band_intensity_diff_norm = 2*(I_eff - I_def)/(I_eff + I_def)`; values are set to NaN when `I_eff + I_def` is near zero.
+
+JSON annotation details:
+- See [`docs/ebsd_json_schema.md`](docs/ebsd_json_schema.md) for the input/output JSON schemas, `pattern_path` semantics, and mapping to CSV/HDF5 outputs.
 
 ## Optional: CycleGAN / ML preprocessing workflow
 
