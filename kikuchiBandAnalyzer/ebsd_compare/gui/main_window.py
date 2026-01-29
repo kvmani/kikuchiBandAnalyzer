@@ -925,21 +925,26 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         patterns_row.setSpacing(6)
         self._pattern_panel_a = PatternPanel("Pattern A")
         self._pattern_panel_b = PatternPanel("Pattern B")
-        self._pattern_panel_d = PatternPanel("Pattern Δ/Ratio")
         self._pattern_panels = {
             "A": self._pattern_panel_a,
             "B": self._pattern_panel_b,
-            "D": self._pattern_panel_d,
         }
         for panel in self._pattern_panels.values():
             panel.canvas().setToolTip(
                 "Pattern view. Use the toolbar overlay to zoom/pan (synced)."
             )
             panel.canvas().add_reset_callback(self._on_pattern_canvas_reset)
+        self._band_profile_plot = BandProfilePlot(logger=self._logger)
+        self._band_profile_plot.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
+        self._band_profile_plot.setToolTip(
+            "Band profile comparison for the selected pixel."
+        )
         patterns_row.addWidget(self._pattern_panel_a, stretch=1)
         patterns_row.addWidget(self._pattern_panel_b, stretch=1)
-        patterns_row.addWidget(self._pattern_panel_d, stretch=1)
-        pattern_layout.addLayout(patterns_row, stretch=3)
+        patterns_row.addWidget(self._band_profile_plot, stretch=1)
+        pattern_layout.addLayout(patterns_row, stretch=1)
 
         controls_row = QtWidgets.QHBoxLayout()
         controls_row.setContentsMargins(0, 0, 0, 0)
@@ -968,12 +973,6 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._band_profile_status_label.setStyleSheet("color: #606060;")
         controls_row.addWidget(self._band_profile_status_label)
         pattern_layout.addLayout(controls_row)
-
-        self._band_profile_plot = BandProfilePlot(logger=self._logger)
-        self._band_profile_plot.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
-        )
-        pattern_layout.addWidget(self._band_profile_plot, stretch=1)
         probe_layout.addWidget(pattern_group)
         probe_layout.setStretch(0, 1)
         probe_layout.setStretch(1, 3)
@@ -2149,7 +2148,6 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             return
         pattern_a = pattern_triplet.get("A")
         pattern_b = pattern_triplet.get("B")
-        pattern_d = pattern_triplet.get("D")
         if pattern_a is None:
             self._logger.warning(
                 'Pattern A missing for field "%s" at X=%s, Y=%s.',
@@ -2162,25 +2160,18 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._pattern_panels["A"].canvas().update_data(
             pattern_a, cmap="gray", reset_view=reset_view
         )
-        if pattern_b is None or pattern_d is None:
+        if pattern_b is None:
             placeholder = np.zeros_like(pattern_a)
             self._pattern_panels["B"].canvas().update_data(
-                placeholder, cmap="gray", reset_view=reset_view
-            )
-            self._pattern_panels["D"].canvas().update_data(
                 placeholder, cmap="gray", reset_view=reset_view
             )
         else:
             self._pattern_panels["B"].canvas().update_data(
                 pattern_b, cmap="gray", reset_view=reset_view
             )
-            self._pattern_panels["D"].canvas().update_data(
-                pattern_d, cmap="gray", reset_view=reset_view
-            )
         self._pattern_reset_view = False
         self._log_pattern_update("A", pattern_a, x, y)
         self._log_pattern_update("B", pattern_b, x, y)
-        self._log_pattern_update("D", pattern_d, x, y)
 
     def _on_band_profile_settings_changed(self, _state: int = 0) -> None:
         """Handle band profile display setting changes."""
@@ -2330,7 +2321,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         """Log pattern update details for debugging.
 
         Parameters:
-            label: Pattern label ("A", "B", or "D").
+            label: Pattern label ("A" or "B").
             pattern: Pattern array or None.
             x: Column index.
             y: Row index.
