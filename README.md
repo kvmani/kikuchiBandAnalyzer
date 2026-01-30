@@ -125,6 +125,35 @@ If you run a CycleGAN (or other model) to enhance patterns before band‑width a
 - Reconstruct processed PNGs back into HDF5 (`hdf5_image_export_and_validation.py`)
 - Run the band‑width pipeline on the reconstructed file
 
+## Partitioned EBSD pattern export
+
+Use `export_ebsd_partition_patterns.py` to export EBSD patterns into multiple folders based on logical filters over scalar EBSD fields (CI, IQ, Phase, etc.). The script is safe by default (dry‑run) and produces scalar‑field statistics (min/max/mean/std/mode) plus partition summaries before writing any files.
+
+Example config: `configs/ebsd_partition_export.yml`
+
+Run a dry‑run (default):
+
+```bash
+python export_ebsd_partition_patterns.py --config configs/ebsd_partition_export.yml
+```
+
+Execute export:
+
+```bash
+python export_ebsd_partition_patterns.py --config configs/ebsd_partition_export.yml --execute
+```
+
+Notes:
+- Conditions use canonical field names (e.g., `CI`, `IQ`, `Phase`) and rely on `field_aliases` in the YAML to map to dataset names inside the OH5/HQ5 file.
+- Output images are 16‑bit grayscale PNGs (default) scaled per pattern.
+- Expression rules: comparisons `> < >= <= == !=`, boolean `AND OR NOT`, parentheses for grouping, and identifier‑only field names (letters/digits/underscore). Chained comparisons are not supported.
+
+Example conditions:
+- `CI > 0.1`
+- `IQ < 400`
+- `CI > 0.1 AND Phase == 1`
+- `(CI > 0.15 AND IQ > 300) OR Phase == 2`
+
 ## EBSD Compare GUI (v2)
 
 This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. Use the `fields` list in the YAML config to select which scalar maps to compare, and `sync_navigation` to toggle linked pan/zoom. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).

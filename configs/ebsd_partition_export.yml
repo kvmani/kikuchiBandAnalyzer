@@ -1,0 +1,27 @@
+ebsd_partition_export:
+  input_path: testData/Test_Ti.oh5
+  output_root: exported_patterns
+  execute: false
+  debug: false
+  pattern_dataset: Pattern
+  scan_name: null
+  stats_fields:
+    - CI
+    - IQ
+  field_aliases:
+    IQ:
+      - Image Quality
+    CI:
+      - Confidence Index
+    Phase:
+      - Phase ID
+  partitions:
+    - name: good_phase1
+      condition: "CI > 0.2 AND Phase == 1"
+    - name: noisy
+      condition: "IQ < 200"
+    - name: rest
+      condition: "OTHERWISE"
+  output:
+    format: png
+    scaling: per_pattern
