@@ -1,6 +1,6 @@
 ebsd_partition_export:
   input_path: testData/Test_Ti.oh5
-  output_root: exported_patterns
+  output_root: tmp/exported_patterns
   execute: false
   debug: false
   pattern_dataset: Pattern
@@ -16,10 +16,12 @@ ebsd_partition_export:
     Phase:
       - Phase ID
   partitions:
-    - name: good_phase1
-      condition: "CI > 0.2 AND Phase == 1"
-    - name: noisy
-      condition: "IQ < 200"
+    - name: bcc
+      condition: "CI > 0.4 AND Phase == 0"
+    - name: fcc
+      condition: "CI > 0.4 AND Phase == 1"
+    - name: mixed
+      condition: "CI < 0.1"
     - name: rest
       condition: "OTHERWISE"
   output:

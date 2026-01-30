@@ -1328,30 +1328,30 @@ def _compute_mode(values: np.ndarray) -> Tuple[float, str]:
 
     cleaned = values[np.isfinite(values)]
     if cleaned.size == 0:
-        return float(\"nan\"), \"n/a\"
+        return float("nan"), "n/a"
 
     if np.issubdtype(cleaned.dtype, np.integer) or np.issubdtype(cleaned.dtype, np.bool_):
         unique_vals, counts = np.unique(cleaned, return_counts=True)
         idx = int(np.argmax(counts))
-        return float(unique_vals[idx]), \"exact\"
+        return float(unique_vals[idx]), "exact"
 
     min_val = float(np.nanmin(cleaned))
     max_val = float(np.nanmax(cleaned))
     if math.isclose(min_val, max_val):
-        return float(min_val), \"exact\"
+        return float(min_val), "exact"
 
     bin_count = min(256, max(16, int(np.sqrt(cleaned.size))))
     hist, edges = np.histogram(cleaned, bins=bin_count)
     idx = int(np.argmax(hist))
     mode_val = 0.5 * (edges[idx] + edges[idx + 1])
-    return float(mode_val), \"approx\"
+    return float(mode_val), "approx"
 
 
 def _summarize_all_scalar_fields(
     field_data: Dict[str, np.ndarray],
     logger: logging.Logger,
 ) -> None:
-    \"\"\"Log summary statistics for all detected scalar fields.
+    """Log summary statistics for all detected scalar fields.
 
     Parameters:
         field_data: Mapping of field names to arrays.
@@ -1359,20 +1359,20 @@ def _summarize_all_scalar_fields(
 
     Returns:
         None.
-    \"\"\"
+    """
 
     if not field_data:
-        logger.warning(\"No scalar fields detected for filtering.\")
+        logger.warning("No scalar fields detected for filtering.")
         return
 
-    logger.info(\"Detected scalar fields (%d):\", len(field_data))
+    logger.info("Detected scalar fields (%d):", len(field_data))
     for field_name in sorted(field_data.keys()):
         values = np.asarray(field_data[field_name])
         finite_mask = np.isfinite(values)
         finite_values = values[finite_mask]
         nan_count = int(values.size - finite_values.size)
         if finite_values.size == 0:
-            logger.info(\"%s stats: all values are NaN\", field_name)
+            logger.info("%s stats: all values are NaN", field_name)
             continue
         min_val = float(np.nanmin(finite_values))
         max_val = float(np.nanmax(finite_values))
@@ -1432,11 +1432,15 @@ def _compile_expression(expression: str, available_fields: Sequence[str]) -> Exp
                 suggestions[name] = matches
         hint_lines = []
         for name, matches in suggestions.items():
-            hint_lines.append(f\"  - {name}: did you mean {', '.join(matches)}?\")
-        hint_text = \"\\n\".join(hint_lines)
+            hint_lines.append(f"  - {name}: did you mean {', '.join(matches)}?")
+        hint_text = "\n".join(hint_lines)
         base_message = (
-            f\"Unknown field(s) in expression: {', '.join(unknown)}. \"\n            \"Ensure field aliases map dataset names to canonical field names.\"\n        )
-        if hint_text:\n            base_message = f\"{base_message}\\n{hint_text}\"\n        raise ExpressionError(base_message)
+            f"Unknown field(s) in expression: {', '.join(unknown)}. "
+            "Ensure field aliases map dataset names to canonical field names."
+        )
+        if hint_text:
+            base_message = f"{base_message}\n{hint_text}"
+        raise ExpressionError(base_message)
     return node
 
 
