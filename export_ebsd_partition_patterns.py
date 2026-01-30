@@ -52,6 +52,7 @@ DEFAULT_PATTERN_DATASET = "Pattern"
 DEFAULT_STATS_FIELDS = ["CI", "IQ"]
 DEFAULT_OUTPUT_FORMAT = "png"
 DEFAULT_SCALING_MODE = "per_pattern"
+DEFAULT_MAX_PATTERNS_PER_PARTITION = 1000
 
 
 class ConfigError(ValueError):
@@ -830,6 +831,8 @@ class ExportConfig:
         field_aliases: Dict[str, List[str]],
         partitions: List[PartitionSpec],
         export_settings: ExportSettings,
+        max_patterns_per_partition: int,
+        random_seed: Optional[int],
     ) -> None:
         """Initialize the export configuration.
 
@@ -844,6 +847,8 @@ class ExportConfig:
             field_aliases: Mapping of canonical names to alias lists.
             partitions: Ordered partition specifications.
             export_settings: Output settings for image format and scaling.
+            max_patterns_per_partition: Maximum patterns to export per partition.
+            random_seed: Random seed for sampling, or None for nondeterministic.
 
         Returns:
             None.
@@ -859,6 +864,8 @@ class ExportConfig:
         self.field_aliases = field_aliases
         self.partitions = partitions
         self.export_settings = export_settings
+        self.max_patterns_per_partition = max_patterns_per_partition
+        self.random_seed = random_seed
 
 
 def _is_boolean_dtype(array: np.ndarray) -> bool:
@@ -1005,6 +1012,13 @@ def _resolve_export_config(
         image_format=_normalize_image_format(image_format),
         scaling_mode=scaling_mode,
     )
+    max_patterns_per_partition = int(
+        section.get("max_patterns_per_partition", DEFAULT_MAX_PATTERNS_PER_PARTITION)
+    )
+    if max_patterns_per_partition <= 0:
+        raise ConfigError("max_patterns_per_partition must be a positive integer.")
+    random_seed_raw = section.get("random_seed", None)
+    random_seed = int(random_seed_raw) if random_seed_raw is not None else None
 
     if not input_path and not debug:
         raise ConfigError("input_path is required unless debug mode is enabled.")
@@ -1022,6 +1036,8 @@ def _resolve_export_config(
         field_aliases=normalized_aliases,
         partitions=partitions,
         export_settings=export_settings,
+        max_patterns_per_partition=max_patterns_per_partition,
+        random_seed=random_seed,
     )
 
 
@@ -1579,6 +1595,7 @@ def _summarize_partition(
     total_points: int,
     stats_fields: Sequence[str],
     field_data: Dict[str, np.ndarray],
+    max_patterns_per_partition: int,
     logger: logging.Logger,
 ) -> None:
     """Log summary statistics for a partition.
@@ -1589,6 +1606,7 @@ def _summarize_partition(
         total_points: Total number of points.
         stats_fields: Fields to report stats on.
         field_data: Mapping of field names to arrays.
+        max_patterns_per_partition: Maximum patterns to export per partition.
         logger: Logger for output.
 
     Returns:
@@ -1601,6 +1619,13 @@ def _summarize_partition(
     logger.info("Matches: %d (%.2f%%)", count, percentage)
     if count == 0:
         logger.warning("Partition '%s' matched zero points.", name)
+    if count > max_patterns_per_partition:
+        logger.info(
+            "Partition '%s' exceeds max_patterns_per_partition=%d (will sample %d patterns).",
+            name,
+            max_patterns_per_partition,
+            max_patterns_per_partition,
+        )
     for field in stats_fields:
         if field not in field_data:
             logger.info("%s stats: N/A", field)
@@ -1756,6 +1781,8 @@ def _run_export(config: ExportConfig, logger: logging.Logger) -> int:
             field_aliases=config.field_aliases,
             partitions=config.partitions,
             export_settings=config.export_settings,
+            max_patterns_per_partition=config.max_patterns_per_partition,
+            random_seed=config.random_seed,
         )
         logger.info("Debug mode enabled. Using simulated OH5 at %s", debug_path)
 
@@ -1800,6 +1827,7 @@ def _run_export(config: ExportConfig, logger: logging.Logger) -> int:
             total_points,
             config.stats_fields,
             field_data,
+            config.max_patterns_per_partition,
             logger,
         )
 
@@ -1811,6 +1839,7 @@ def _run_export(config: ExportConfig, logger: logging.Logger) -> int:
         handle.close()
         return 0
 
+    rng = np.random.default_rng(config.random_seed)
     try:
         for partition in config.partitions:
             mask = masks.get(partition.name)
@@ -1820,6 +1849,18 @@ def _run_export(config: ExportConfig, logger: logging.Logger) -> int:
             if indices.size == 0:
                 logger.warning("Partition '%s' matched zero points.", partition.name)
                 continue
+            if indices.size > config.max_patterns_per_partition:
+                indices = rng.choice(
+                    indices, size=config.max_patterns_per_partition, replace=False
+                )
+                indices = np.sort(indices)
+                logger.info(
+                    "Partition '%s' sampled %d of %d patterns (max=%d).",
+                    partition.name,
+                    indices.size,
+                    int(np.count_nonzero(mask)),
+                    config.max_patterns_per_partition,
+                )
             output_dir = config.output_root / partition.name
             _export_patterns(
                 pattern_dataset,

@@ -146,6 +146,7 @@ python export_ebsd_partition_patterns.py --config configs/ebsd_partition_export.
 Notes:
 - Conditions use canonical field names (e.g., `CI`, `IQ`, `Phase`) and rely on `field_aliases` in the YAML to map to dataset names inside the OH5/HQ5 file.
 - Output images are 16‑bit grayscale PNGs (default) scaled per pattern.
+- Use `max_patterns_per_partition` to cap exports per partition (defaults to 1000) and `random_seed` for reproducible sampling when a partition has more matches than the cap.
 - Expression rules: comparisons `> < >= <= == !=`, boolean `AND OR NOT`, parentheses for grouping, and identifier‑only field names (letters/digits/underscore). Chained comparisons are not supported.
 
 Example conditions:

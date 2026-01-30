@@ -5,6 +5,8 @@ ebsd_partition_export:
   debug: false
   pattern_dataset: Pattern
   scan_name: null
+  max_patterns_per_partition: 1000
+  random_seed: 123
   stats_fields:
     - CI
     - IQ
