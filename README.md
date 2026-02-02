@@ -155,6 +155,13 @@ Example conditions:
 - `CI > 0.1 AND Phase == 1`
 - `(CI > 0.15 AND IQ > 300) OR Phase == 2`
 
+## Unmixing research notes (working)
+
+This repo includes living notes for planning and documenting EBSD pattern unmixing approaches (intended to later inform code upgrades and publication-quality discussion):
+
+- [`docs/unmixing_algorithms_and_issues.md`](docs/unmixing_algorithms_and_issues.md) — index of algorithm families, common degeneracies, evaluation ideas, and open questions.
+- [`docs/mixed_pattern_unmixing.md`](docs/mixed_pattern_unmixing.md) — case study: avoiding the trivial `A = B = C` collapse in `C ≈ xA + (1-x)B`.
+
 ## EBSD Compare GUI (v2)
 
 This repo includes an EBSD scan comparator GUI that supports aligned or mismatched OH5 grids. When grids differ, a registration dialog helps align scan B to scan A via human-picked control points and RANSAC. Use the `fields` list in the YAML config to select which scalar maps to compare, and `sync_navigation` to toggle linked pan/zoom. See the package README for full details: [`kikuchiBandAnalyzer/ebsd_compare/README.md`](kikuchiBandAnalyzer/ebsd_compare/README.md).
