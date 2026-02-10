@@ -25,12 +25,12 @@ from kikuchiBandWidthDetector import prepare_json_input, KikuchiBatchProcessor
 
 def _write_min_ang(path: Path, nrows: int, ncols_even: int, column_headers: list[str]) -> None:
     """
-    Write a minimal .ang file compatible with modify_ang_file.
+    Write a minimal .ang file with a valid header and flattened data rows.
 
     Parameters:
         path: Output file path.
-        nrows: Number of rows in the data section.
-        ncols_even: Number of columns per row.
+        nrows: Number of scan rows.
+        ncols_even: Number of scan columns per row.
         column_headers: Column header names.
 
     Returns:
@@ -42,8 +42,9 @@ def _write_min_ang(path: Path, nrows: int, ncols_even: int, column_headers: list
         handle.write(f"# NCOLS_EVEN: {ncols_even}\n")
         handle.write(f"# NROWS: {nrows}\n")
         handle.write("# HEADER: End\n")
-        for _ in range(nrows):
-            handle.write("  ".join(["0.00"] * ncols_even) + "\n")
+        total_pixels = nrows * ncols_even
+        for _ in range(total_pixels):
+            handle.write("  ".join(["0.00"] * len(column_headers)) + "\n")
 
 
 def _create_min_h5(path: Path, scan_name: str, n_pixels: int) -> None:
@@ -153,7 +154,7 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
     """Write band_profile and central_line datasets to HDF5."""
     scan_name = "Scan"
     n_pixels = 2
-    h5_path = tmp_path / "scan.oh5"
+    h5_path = tmp_path / "scan_modified.oh5"
     _create_min_h5(h5_path, scan_name, n_pixels)
 
     config_path = tmp_path / "config.yml"
@@ -177,18 +178,14 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
     automator = BandWidthAutomator(config_path=str(config_path))
     automator.modified_data_path = h5_path
     automator.output_dir = tmp_path
-    automator.base_name = "scan"
+    automator.base_name = "scan_modified"
     automator.in_ang_path = tmp_path / "scan.ang"
     column_headers = [
         "IQ",
         "Fit",
-        "110_band_width",
-        "110_eff_deff_ratio",
-        "110_psnr",
-        "110_defficientlineIntensity",
-        "110_efficientlineIntensity",
-        "110_efficientDefficientRatio",
-        "110_Bandwidth_efficientDefficientRatio",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
     ]
     _write_min_ang(automator.in_ang_path, nrows=1, ncols_even=2, column_headers=column_headers)
 
@@ -234,6 +231,20 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
         peak_idx = handle[f"/{scan_name}/EBSD/Data/central_peak_idx"][()]
         profile_len = handle[f"/{scan_name}/EBSD/Data/profile_length"][()]
         band_valid = handle[f"/{scan_name}/EBSD/Data/band_valid"][()]
+
+    ang_output_path = tmp_path / "scan_modified.ang"
+    assert ang_output_path.exists()
+    ang_lines = ang_output_path.read_text(encoding="utf-8").splitlines()
+    data_lines = [line for line in ang_lines if line and not line.startswith("#")]
+    assert len(data_lines) == 2
+    first_values = data_lines[0].split()
+    second_values = data_lines[1].split()
+    assert first_values[2] == "1.000000"
+    assert first_values[3] == "2.000000"
+    assert first_values[4] == "2.000000"
+    assert second_values[2] == "0.000000"
+    assert second_values[3] == "0.000000"
+    assert second_values[4] == "0.000000"
 
     assert profile.shape == (n_pixels, 8)
     assert profile.dtype == np.float32

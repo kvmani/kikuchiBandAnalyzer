@@ -8,6 +8,7 @@ New in this repo version:
 - Band-profile exports now include bandwidth search indices (`band_start_idx`, `band_end_idx`, `central_peak_idx`, `profile_length`) in both JSON and OH5/HDF5 outputs.
 - A visualization-first **Automator GUI** is available for running the pipeline from YAML without freezing the UI.
 - EBSD Comparator can overlay and compare exported `band_profile` vectors from Scan A/B.
+- A dedicated **OH5 to ANG Exporter GUI** supports mapping OH5 scalar fields into ANG columns with sanity checks and live logging.
 
 ## Quickstart (run on included test data)
 
@@ -91,8 +92,13 @@ For an input file `<stem>.oh5`/`<stem>.h5`, the pipeline writes outputs next to 
 - An augmented HDF5 copy:
   - `<stem>_modified.h5`
   - This copy receives computed datasets under `/<scan_name>/EBSD/Data/` (e.g. `Band_Width`, `psnr`, `band_intensity_ratio`, `band_intensity_diff_norm`, `band_profile`, `central_line`, `strain`, `stress`, …).
-- Derived `.ang` files with additional columns:
-  - `<stem>_modified_<suffix>.ang`
+- Companion ANG export for TSL loading:
+  - `<stem>_modified.ang`
+  - Header is copied verbatim from the original `<stem>.ang`.
+  - PRIAS columns are overwritten from `<stem>_modified.h5` as:
+    - `PRIAS Bottom Strip` <- `Band_Width`
+    - `PRIAS Center Square` <- `psnr`
+    - `PRIAS Top Strip` <- `band_intensity_ratio`
 
 Notes:
 - The pipeline does not overwrite your original `.oh5`/`.h5`; it works on copies.
@@ -182,6 +188,8 @@ python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd
 python scripts/run_ebsd_compare_demo.py --config configs/ebsd_compare_config.yml
 python -m kikuchiBandAnalyzer.automator_gui.main_window --config bandDetectorOptionsHcp.yml
 python scripts/run_automator_gui_demo.py --debug
+python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.gui
+python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.cli --config configs/oh5_to_ang_exporter.yml
 pytest -q
 ```
 
@@ -193,6 +201,30 @@ The Automator GUI runs the same analysis engine as `KikuchiBandWidthAutomator.py
 
 User guide:
 - [`docs/automator_gui.md`](docs/automator_gui.md)
+
+## OH5 to ANG Exporter
+
+This GUI builds a new ANG file by combining:
+
+- a modified OH5/HDF5 file (source of scalar/derived values), and
+- a source ANG file (header template + baseline row layout).
+
+It performs sanity checks on pixel counts before export, enforces locked mappings for `phi1/PHI/phi2`, supports user-defined source->target mappings for other columns, and can optionally write one ASCII mapping note line in the ANG header.
+
+User guide:
+- [`docs/howto_oh5_to_ang_exporter.md`](docs/howto_oh5_to_ang_exporter.md)
+
+Launch:
+
+```bash
+python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.gui
+```
+
+CLI (non-interactive):
+
+```bash
+python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.cli --config configs/oh5_to_ang_exporter.yml
+```
 
 ## Windows installer (EBSD Scan Comparator)
 

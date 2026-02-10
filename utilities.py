@@ -12,7 +12,8 @@ from packaging.version import parse as _v
 from diffpy.structure import Atom, Lattice, Structure
 from orix.crystal_map import Phase
 from orix.vector import Miller
-from typing import Union, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
 
 
 def parse_indices(obj: Union[str, Tuple[int, ...], list]) -> Tuple[int, ...]:
@@ -386,6 +387,180 @@ def modify_ang_file(file_path, file_suffix="_band_width", **kwargs):
         f.writelines(modified_lines)
 
     logging.info(f"Modified file saved as: {new_file_path}")
+
+
+def _normalize_ang_column_name(name: str) -> str:
+    """
+    Normalize an ANG column name for robust matching.
+
+    Parameters:
+        name: Raw column header string.
+
+    Returns:
+        Lowercase normalized name with unified separators.
+    """
+    normalized = str(name).replace("_", " ").replace("-", " ").strip().lower()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _find_scan_group_name(h5file: h5py.File) -> str:
+    """
+    Find the top-level scan group in an EDAX/TSL HDF5 file.
+
+    Parameters:
+        h5file: Open HDF5 file handle.
+
+    Returns:
+        Name of the first top-level scan group.
+
+    Raises:
+        KeyError: If no valid scan group is found.
+    """
+    for key, item in h5file.items():
+        if key not in {"Manufacturer", "Version"} and isinstance(item, h5py.Group):
+            return key
+    raise KeyError("No top-level scan group found in HDF5 file.")
+
+
+def export_ang_with_prias_metrics(
+    original_ang_path: Union[str, Path],
+    modified_h5_path: Union[str, Path],
+    output_ang_path: Optional[Union[str, Path]] = None,
+) -> Path:
+    """
+    Export an ANG file by preserving the original header and replacing PRIAS columns.
+
+    The function copies the original `.ang` header verbatim (up to and including
+    `# HEADER: End`) and rewrites data rows so that:
+    - `PRIAS Bottom Strip` receives `Band_Width`
+    - `PRIAS Center Square` receives `psnr`
+    - `PRIAS Top Strip` receives `band_intensity_ratio`
+
+    All non-PRIAS columns are preserved from the original ANG data rows.
+
+    Parameters:
+        original_ang_path: Source ANG file whose header/data layout is reused.
+        modified_h5_path: Modified HDF5/OH5 path containing derived datasets.
+        output_ang_path: Optional destination path. Defaults to `<modified_h5_stem>.ang`.
+
+    Returns:
+        Path to the written ANG file.
+
+    Raises:
+        FileNotFoundError: If input paths do not exist.
+        ValueError: If the ANG header is malformed or required columns are missing.
+        KeyError: If required HDF5 datasets are missing.
+    """
+    source_ang = Path(original_ang_path)
+    source_h5 = Path(modified_h5_path)
+    if not source_ang.exists():
+        raise FileNotFoundError(f"ANG file not found: {source_ang}")
+    if not source_h5.exists():
+        raise FileNotFoundError(f"HDF5 file not found: {source_h5}")
+
+    destination = (
+        Path(output_ang_path)
+        if output_ang_path is not None
+        else source_h5.with_suffix(".ang")
+    )
+
+    with source_ang.open("r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+
+    header_end_index = None
+    ncols_even = None
+    nrows = None
+    column_headers = []
+    for idx, line in enumerate(lines):
+        if line.startswith("# NCOLS_EVEN:"):
+            ncols_even = int(line.split(":", 1)[1].strip())
+        elif line.startswith("# NROWS:"):
+            nrows = int(line.split(":", 1)[1].strip())
+        elif line.startswith("# COLUMN_HEADERS:"):
+            column_headers = [header.strip() for header in line.split(":", 1)[1].strip().split(",")]
+        elif line.startswith("# HEADER: End"):
+            header_end_index = idx
+            break
+
+    if header_end_index is None:
+        raise ValueError(f"ANG header terminator '# HEADER: End' not found: {source_ang}")
+    if ncols_even is None or nrows is None:
+        raise ValueError(f"ANG header missing NCOLS_EVEN/NROWS: {source_ang}")
+    if not column_headers:
+        raise ValueError(f"ANG header missing COLUMN_HEADERS: {source_ang}")
+
+    normalized_headers = [_normalize_ang_column_name(name) for name in column_headers]
+    required_prias_columns: Dict[str, str] = {
+        "bottom": "prias bottom strip",
+        "center": "prias center square",
+        "top": "prias top strip",
+    }
+    prias_indices: Dict[str, int] = {}
+    for key, required_name in required_prias_columns.items():
+        if required_name not in normalized_headers:
+            raise ValueError(
+                f"Required ANG column '{required_name}' not found in COLUMN_HEADERS."
+            )
+        prias_indices[key] = normalized_headers.index(required_name)
+
+    with h5py.File(source_h5, "r") as h5file:
+        scan_name = _find_scan_group_name(h5file)
+        data_root = f"/{scan_name}/EBSD/Data"
+        dataset_map = {
+            "bottom": "Band_Width",
+            "center": "psnr",
+            "top": "band_intensity_ratio",
+        }
+        values: Dict[str, np.ndarray] = {}
+        for key, dataset_name in dataset_map.items():
+            dataset_path = f"{data_root}/{dataset_name}"
+            if dataset_path not in h5file:
+                raise KeyError(f"Required dataset not found: {dataset_path}")
+            arr = np.asarray(h5file[dataset_path][()], dtype=np.float64).ravel(order="C")
+            values[key] = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    expected_pixels = int(nrows) * int(ncols_even)
+    for key, arr in values.items():
+        if arr.size != expected_pixels:
+            raise ValueError(
+                f"Dataset '{dataset_map[key]}' length {arr.size} does not match ANG pixel count {expected_pixels}."
+            )
+
+    header_lines = lines[: header_end_index + 1]
+    body_lines = lines[header_end_index + 1 :]
+
+    rewritten_lines = []
+    pixel_index = 0
+    for line in body_lines:
+        parts = line.split()
+        if len(parts) != len(column_headers):
+            rewritten_lines.append(line)
+            continue
+        if pixel_index >= expected_pixels:
+            raise ValueError(
+                f"ANG file has more data rows than expected ({expected_pixels})."
+            )
+        parts[prias_indices["bottom"]] = f"{values['bottom'][pixel_index]:.6f}"
+        parts[prias_indices["center"]] = f"{values['center'][pixel_index]:.6f}"
+        parts[prias_indices["top"]] = f"{values['top'][pixel_index]:.6f}"
+        rewritten_lines.append("  ".join(parts) + "\n")
+        pixel_index += 1
+
+    if pixel_index != expected_pixels:
+        raise ValueError(
+            f"ANG data row count {pixel_index} does not match expected pixel count {expected_pixels}."
+        )
+
+    with destination.open("w", encoding="utf-8") as handle:
+        handle.writelines(header_lines)
+        handle.writelines(rewritten_lines)
+
+    logging.info(
+        "Exported ANG file with PRIAS metrics to %s (Band_Width->PRIAS Bottom Strip, psnr->PRIAS Center Square, band_intensity_ratio->PRIAS Top Strip).",
+        destination,
+    )
+    return destination
 
 
 def convert_results(obj):

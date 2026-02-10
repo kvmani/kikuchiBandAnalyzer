@@ -346,12 +346,10 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def export_results(self, processed):
-        """Export CSV summaries and write results back into the HDF5 file."""
+        """Export CSV summaries, write HDF5 outputs, and generate companion ANG output."""
         output_csv_path = self.output_dir / f"{self.base_name}_bandOutputData.csv"
         filtered_csv_path = self.output_dir / f"{self.base_name}_filtered_band_data.csv"
         ut.save_results_to_csv(processed, str(output_csv_path), str(filtered_csv_path))
-
-        desired_hkl = self.config.get("desired_hkl", "1,1,1")
 
         df = pd.read_csv(filtered_csv_path)
         required_cols = [
@@ -480,32 +478,6 @@ class BandWidthAutomator:
             elastic_modulus = float(self.config["elastic_modulus"])
             band_stress_array = band_strain_array * elastic_modulus
 
-            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_band_width", IQ=band_width_array)
-            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_eff_deff_ratio", IQ=eff_ratio_array)
-            #ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_stress", IQ=band_stress_array)
-            ut.modify_ang_file(self.in_ang_path, f"{desired_hkl}_psnr", IQ=psnr_array)
-            ut.modify_ang_file(
-                self.in_ang_path,
-                f"{desired_hkl}_defficientlineIntensity",
-                IQ=defficientIntensity_array,
-            )
-            ut.modify_ang_file(
-                self.in_ang_path,
-                f"{desired_hkl}_efficientlineIntensity",
-                IQ=efficientIntensity_array,
-            )
-            ut.modify_ang_file(
-                self.in_ang_path,
-                f"{desired_hkl}_efficientDefficientRatio",
-                IQ=eff_ratio_array,
-            )
-            ut.modify_ang_file(
-                self.in_ang_path,
-                f"{desired_hkl}_Bandwidth_efficientDefficientRatio",
-                IQ=band_width_array,
-                Fit=eff_ratio_array,
-            )
-
             base_outputs = {
                 "Band_Width": band_width_array,
                 "psnr": psnr_array,
@@ -609,6 +581,19 @@ class BandWidthAutomator:
             logging.info(
                 "Wrote Band_Width, strain, stress, psnr, efficient/defficient intensity to HDF5."
             )
+
+        try:
+            ang_output_path = ut.export_ang_with_prias_metrics(
+                original_ang_path=self.in_ang_path,
+                modified_h5_path=self.modified_data_path,
+            )
+            logging.info("Exported companion ANG file for TSL at: %s", ang_output_path)
+        except Exception:
+            logging.exception(
+                "Failed to export companion ANG file with PRIAS metrics from %s.",
+                self.modified_data_path,
+            )
+            raise
 
     # ------------------------------------------------------------------
     def run(self):
