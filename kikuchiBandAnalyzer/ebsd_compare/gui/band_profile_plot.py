@@ -95,6 +95,20 @@ class BandProfilePlot(QtWidgets.QWidget):
         self._apply_margins()
         self._canvas.draw_idle()
 
+    def set_series_labels(self, label_a: str, label_b: str) -> None:
+        """Update series labels used in profile legends.
+
+        Parameters:
+            label_a: Label for scan A profile.
+            label_b: Label for scan B profile.
+
+        Returns:
+            None.
+        """
+
+        self._label_a = str(label_a).strip() or "Scan A"
+        self._label_b = str(label_b).strip() or "Scan B"
+
     def update_plot(
         self,
         payload_a: Optional[BandProfilePayload],
@@ -144,7 +158,7 @@ class BandProfilePlot(QtWidgets.QWidget):
                 profile,
                 color=color,
                 linewidth=1.8,
-                label=f"{series_name} profile",
+                label=series_name,
             )
             any_series = True
 
@@ -167,17 +181,13 @@ class BandProfilePlot(QtWidgets.QWidget):
                         profile.size,
                     )
                     continue
-                if self._marker_labels_include_series:
-                    draw_label = f"{series_name} {marker_label}"
-                else:
-                    draw_label = f"Band {marker_label}"
                 self._axes.axvline(
                     float(idx),
                     color=color,
                     linestyle=linestyle,
                     linewidth=1.2 if marker_label != "peak" else 1.0,
                     alpha=alpha,
-                    label=draw_label,
+                    label="_nolegend_",
                 )
                 any_marker = True
 

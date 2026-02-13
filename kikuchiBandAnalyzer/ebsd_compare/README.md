@@ -57,6 +57,8 @@ If your OH5 files contain the exported band datasets (`band_profile`, `central_l
 - Plots `band_profile` from Scan A and Scan B on shared axes (optional normalization).
 - Overlays `central_line` on patterns (toggleable per pattern).
 - Adds probe-table rows for key band scalar fields when present.
+- Auto-fills editable scan display names from loaded file basenames and uses those names in plot titles/legends.
+- When marker display is enabled, start/end/peak marker lines are drawn without adding extra legend entries.
 
 User guide: `docs/ebsd_comparator_band_profiles.md`
 

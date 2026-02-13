@@ -49,7 +49,12 @@ python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.gui \
    - locked mapping table.
 4. Add user mappings in **Column Mapping**:
    - select OH5 source field,
-   - select ANG target column.
+   - select ANG target column,
+   - optional: enable **Scale source min/max to target range** and set `Range Min/Range Max`,
+   - optional: choose **Output Type**:
+     - `Float`: write decimal values (default behavior),
+     - `Int (round nearest)`: round to nearest integer before writing,
+     - `Auto (infer from target)`: infer integer-like targets from ANG template rows.
 5. Optional: enable writing a mapping header note line.
 6. Click **Export ANG**.
 
@@ -74,6 +79,20 @@ You can enable one extra ASCII header line:
 
 If TSL import does not tolerate this line, disable the option and re-export.
 
+## Mapping transform examples
+
+- Scale and write as float:
+  - `source: Band_Width`
+  - `target: IQ`
+  - `scale_enabled: true`
+  - `scale_target_min: 4400`
+  - `scale_target_max: 7300`
+  - `output_type: float`
+- Convert float source to integer target (rounded):
+  - `source: Fit`
+  - `target: SEM`
+  - `output_type: int`
+
 ## Non-interactive CLI mode
 
 Use YAML config (example: `configs/oh5_to_ang_exporter.yml`):
@@ -81,6 +100,17 @@ Use YAML config (example: `configs/oh5_to_ang_exporter.yml`):
 ```bash
 python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.cli --config configs/oh5_to_ang_exporter.yml
 ```
+
+Supported mapping keys in YAML:
+
+- Required:
+  - `source`
+  - `target`
+- Optional:
+  - `scale_enabled` (boolean)
+  - `scale_target_min` (float, required when `scale_enabled: true`)
+  - `scale_target_max` (float, required when `scale_enabled: true`)
+  - `output_type` (`float`, `int`, or `auto`)
 
 Enable debug logging:
 

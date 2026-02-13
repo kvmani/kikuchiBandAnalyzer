@@ -2,9 +2,9 @@
 # Run with:
 # python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.cli --config configs/oh5_to_ang_exporter.yml
 
-oh5_path: testData/Test_Ti_modified.oh5
+oh5_path: testData/Test_Ti.oh5
 ang_path: testData/Test_Ti.ang
-output_ang_path: testData/Test_Ti_modified.ang
+output_ang_path: testData/Test_Ti_scaled_example.ang
 include_mapping_note: false
 
 # User-overridable mappings.
@@ -13,9 +13,14 @@ include_mapping_note: false
 #   PHI  <- Phi
 #   phi2 <- Phi2
 mappings:
-  - source: Band_Width
-    target: PRIAS Bottom Strip
-  - source: psnr
-    target: PRIAS Center Square
-  - source: band_intensity_ratio
-    target: PRIAS Top Strip
+  - source: Fit
+    target: SEM
+    # Optional per-mapping transform: scale source min/max to this range.
+    scale_enabled: true
+    scale_target_min: 20000.0
+    scale_target_max: 23000.0
+    # Optional output token type: float (default), int (round nearest), auto.
+    output_type: int
+  - source: CI
+    target: IQ
+    output_type: float

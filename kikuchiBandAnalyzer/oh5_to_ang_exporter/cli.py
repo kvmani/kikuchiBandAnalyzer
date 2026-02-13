@@ -49,7 +49,8 @@ def _parse_mappings(raw: Any) -> list[ColumnMapping]:
         List of ColumnMapping entries.
 
     Raises:
-        ValueError: If the mapping format is invalid.
+        ValueError: If the mapping format is invalid. Optional transform keys are:
+            ``scale_enabled``, ``scale_target_min``, ``scale_target_max``, ``output_type``.
     """
 
     if raw is None:
@@ -65,7 +66,36 @@ def _parse_mappings(raw: Any) -> list[ColumnMapping]:
         target = entry.get("target")
         if source is None or target is None:
             raise ValueError(f"Mapping entry must include 'source' and 'target': {entry!r}")
-        items.append(ColumnMapping(source_field=str(source), target_column=str(target), locked=False))
+
+        scale_enabled = bool(entry.get("scale_enabled", False))
+        scale_payload = entry.get("scale")
+        scale_min_raw = entry.get("scale_target_min")
+        scale_max_raw = entry.get("scale_target_max")
+        if isinstance(scale_payload, dict):
+            scale_enabled = True
+            if scale_min_raw is None:
+                scale_min_raw = scale_payload.get("target_min")
+            if scale_max_raw is None:
+                scale_max_raw = scale_payload.get("target_max")
+        elif isinstance(scale_payload, bool):
+            scale_enabled = scale_payload
+        elif scale_payload is not None:
+            raise ValueError(
+                "Mapping key 'scale' must be boolean or a mapping with target_min/target_max."
+            )
+
+        output_type = str(entry.get("output_type", entry.get("dtype", "float")))
+        items.append(
+            ColumnMapping(
+                source_field=str(source),
+                target_column=str(target),
+                locked=False,
+                scale_enabled=scale_enabled,
+                scale_target_min=float(scale_min_raw) if scale_min_raw is not None else None,
+                scale_target_max=float(scale_max_raw) if scale_max_raw is not None else None,
+                output_type=output_type,
+            )
+        )
     return items
 
 

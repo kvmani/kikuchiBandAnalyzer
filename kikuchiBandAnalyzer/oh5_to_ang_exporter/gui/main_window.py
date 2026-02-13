@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import (
@@ -65,6 +66,10 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         self._mapping_table: Optional[QtWidgets.QTableWidget] = None
         self._source_field_combo: Optional[QtWidgets.QComboBox] = None
         self._target_column_combo: Optional[QtWidgets.QComboBox] = None
+        self._scale_checkbox: Optional[QtWidgets.QCheckBox] = None
+        self._scale_min_spin: Optional[QtWidgets.QDoubleSpinBox] = None
+        self._scale_max_spin: Optional[QtWidgets.QDoubleSpinBox] = None
+        self._output_type_combo: Optional[QtWidgets.QComboBox] = None
         self._include_mapping_note_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._export_button: Optional[QtWidgets.QPushButton] = None
         self._status_label: Optional[QtWidgets.QLabel] = None
@@ -206,8 +211,44 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         mapping_controls.addStretch(1)
         mapping_layout.addLayout(mapping_controls)
 
-        self._mapping_table = QtWidgets.QTableWidget(0, 2)
-        self._mapping_table.setHorizontalHeaderLabels(["OH5 Source Field", "ANG Target Column"])
+        transform_controls = QtWidgets.QHBoxLayout()
+        self._scale_checkbox = QtWidgets.QCheckBox("Scale source min/max to target range")
+        self._scale_checkbox.toggled.connect(self._on_scale_toggle)
+        transform_controls.addWidget(self._scale_checkbox)
+        transform_controls.addWidget(QtWidgets.QLabel("Range Min"))
+        self._scale_min_spin = QtWidgets.QDoubleSpinBox()
+        self._scale_min_spin.setRange(-1e12, 1e12)
+        self._scale_min_spin.setDecimals(6)
+        self._scale_min_spin.setSingleStep(1.0)
+        self._scale_min_spin.setEnabled(False)
+        transform_controls.addWidget(self._scale_min_spin)
+        transform_controls.addWidget(QtWidgets.QLabel("Range Max"))
+        self._scale_max_spin = QtWidgets.QDoubleSpinBox()
+        self._scale_max_spin.setRange(-1e12, 1e12)
+        self._scale_max_spin.setDecimals(6)
+        self._scale_max_spin.setSingleStep(1.0)
+        self._scale_max_spin.setEnabled(False)
+        transform_controls.addWidget(self._scale_max_spin)
+        transform_controls.addWidget(QtWidgets.QLabel("Output Type"))
+        self._output_type_combo = QtWidgets.QComboBox()
+        self._output_type_combo.addItem("Float", "float")
+        self._output_type_combo.addItem("Int (round nearest)", "int")
+        self._output_type_combo.addItem("Auto (infer from target)", "auto")
+        transform_controls.addWidget(self._output_type_combo)
+        transform_controls.addStretch(1)
+        mapping_layout.addLayout(transform_controls)
+
+        self._mapping_table = QtWidgets.QTableWidget(0, 6)
+        self._mapping_table.setHorizontalHeaderLabels(
+            [
+                "OH5 Source Field",
+                "ANG Target Column",
+                "Scale Enabled",
+                "Scale Min",
+                "Scale Max",
+                "Output Type",
+            ]
+        )
         self._mapping_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self._mapping_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self._mapping_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
@@ -411,6 +452,19 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         self._target_column_combo.clear()
         self._target_column_combo.addItems(target_options)
 
+    def _on_scale_toggle(self, enabled: bool) -> None:
+        """Enable or disable scale target range widgets.
+
+        Parameters:
+            enabled: True when scaling is enabled for new mappings.
+
+        Returns:
+            None.
+        """
+
+        self._scale_min_spin.setEnabled(bool(enabled))
+        self._scale_max_spin.setEnabled(bool(enabled))
+
     def _add_mapping_row(self) -> None:
         """Append one user-selected mapping row."""
 
@@ -424,8 +478,20 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
 
         source = self._source_field_combo.currentText().strip()
         target = self._target_column_combo.currentText().strip()
+        scale_enabled = bool(self._scale_checkbox.isChecked())
+        scale_min = float(self._scale_min_spin.value()) if scale_enabled else None
+        scale_max = float(self._scale_max_spin.value()) if scale_enabled else None
+        output_type = str(self._output_type_combo.currentData() or "float")
+
         if not source or not target:
             QtWidgets.QMessageBox.warning(self, "Invalid mapping", "Select both source and target.")
+            return
+        if scale_enabled and np.isclose(scale_min, scale_max):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid scale range",
+                "Scale target min and max must be different values.",
+            )
             return
         if target in self._locked_targets:
             QtWidgets.QMessageBox.warning(
@@ -450,7 +516,35 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         self._mapping_table.insertRow(row)
         self._mapping_table.setItem(row, 0, QtWidgets.QTableWidgetItem(source))
         self._mapping_table.setItem(row, 1, QtWidgets.QTableWidgetItem(target))
-        self._logger.info("Added mapping row: %s ---> %s", source, target)
+        self._mapping_table.setItem(
+            row,
+            2,
+            QtWidgets.QTableWidgetItem("Yes" if scale_enabled else "No"),
+        )
+        self._mapping_table.setItem(
+            row,
+            3,
+            QtWidgets.QTableWidgetItem(f"{scale_min:.6f}" if scale_enabled else ""),
+        )
+        self._mapping_table.setItem(
+            row,
+            4,
+            QtWidgets.QTableWidgetItem(f"{scale_max:.6f}" if scale_enabled else ""),
+        )
+        self._mapping_table.setItem(row, 5, QtWidgets.QTableWidgetItem(output_type))
+
+        transform_note = (
+            f", scale=[{scale_min:.6g},{scale_max:.6g}]"
+            if scale_enabled
+            else ""
+        )
+        self._logger.info(
+            "Added mapping row: %s ---> %s%s, output_type=%s",
+            source,
+            target,
+            transform_note,
+            output_type,
+        )
 
     def _remove_selected_mapping_rows(self) -> None:
         """Remove selected rows from the user mapping table."""
@@ -475,13 +569,47 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         for row in range(self._mapping_table.rowCount()):
             source_item = self._mapping_table.item(row, 0)
             target_item = self._mapping_table.item(row, 1)
+            scale_enabled_item = self._mapping_table.item(row, 2)
+            scale_min_item = self._mapping_table.item(row, 3)
+            scale_max_item = self._mapping_table.item(row, 4)
+            output_type_item = self._mapping_table.item(row, 5)
             if source_item is None or target_item is None:
                 continue
             source = source_item.text().strip()
             target = target_item.text().strip()
             if not source or not target:
                 continue
-            mappings.append(ColumnMapping(source_field=source, target_column=target, locked=False))
+
+            scale_enabled = (
+                scale_enabled_item is not None
+                and scale_enabled_item.text().strip().lower() == "yes"
+            )
+            scale_min: Optional[float] = None
+            scale_max: Optional[float] = None
+            if scale_enabled:
+                if scale_min_item is None or scale_max_item is None:
+                    raise ValueError(
+                        f"Mapping row {row + 1} has scaling enabled but missing bounds."
+                    )
+                scale_min = float(scale_min_item.text().strip())
+                scale_max = float(scale_max_item.text().strip())
+
+            output_type = (
+                output_type_item.text().strip().lower()
+                if output_type_item is not None and output_type_item.text().strip()
+                else "float"
+            )
+            mappings.append(
+                ColumnMapping(
+                    source_field=source,
+                    target_column=target,
+                    locked=False,
+                    scale_enabled=scale_enabled,
+                    scale_target_min=scale_min,
+                    scale_target_max=scale_max,
+                    output_type=output_type,
+                )
+            )
         return mappings
 
     def _start_export(self) -> None:
@@ -499,7 +627,11 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Missing output", "Set output ANG path.")
             return
 
-        user_mappings = self._collect_user_mappings()
+        try:
+            user_mappings = self._collect_user_mappings()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Invalid mapping", str(exc))
+            return
         request = ExportRequest(
             oh5_path=Path(self._catalog.source_path),
             ang_path=Path(self._template.source_path),

@@ -18,6 +18,8 @@ LOCKED_COLUMN_TO_SOURCE: dict[str, str] = {
     "phi": "Phi",
     "phi2": "Phi2",
 }
+INT_TOKEN_PATTERN = re.compile(r"^[+-]?\d+$")
+VALID_OUTPUT_TYPES = {"auto", "float", "int"}
 
 
 @dataclass(frozen=True)
@@ -28,11 +30,19 @@ class ColumnMapping:
         source_field: Scalar dataset name from ``/<scan>/EBSD/Data`` in OH5.
         target_column: ANG column name from ``# COLUMN_HEADERS``.
         locked: True when the mapping is automatically enforced (non-overridable).
+        scale_enabled: Whether to scale source min/max into a target range.
+        scale_target_min: Target minimum for scaling when enabled.
+        scale_target_max: Target maximum for scaling when enabled.
+        output_type: Output token type. Supported values: ``auto``, ``float``, ``int``.
     """
 
     source_field: str
     target_column: str
     locked: bool = False
+    scale_enabled: bool = False
+    scale_target_min: Optional[float] = None
+    scale_target_max: Optional[float] = None
+    output_type: str = "float"
 
 
 @dataclass(frozen=True)
@@ -361,7 +371,9 @@ def locked_target_columns(template: AngTemplate) -> tuple[str, ...]:
 
 
 
-def _coerce_mapping_entry(entry: ColumnMapping | Mapping[str, str] | Sequence[str]) -> tuple[str, str]:
+def _coerce_mapping_entry(
+    entry: ColumnMapping | Mapping[str, object] | Sequence[str],
+) -> tuple[str, str]:
     """Coerce one mapping entry into ``(source_field, target_column)``.
 
     Parameters:
@@ -387,11 +399,246 @@ def _coerce_mapping_entry(entry: ColumnMapping | Mapping[str, str] | Sequence[st
     raise ValueError(f"Unsupported mapping entry: {entry!r}")
 
 
+def _normalize_output_type(raw_value: str) -> str:
+    """Normalize and validate a mapping output type string.
+
+    Parameters:
+        raw_value: Raw output type value.
+
+    Returns:
+        Normalized output type.
+
+    Raises:
+        ValueError: If the type is unsupported.
+    """
+
+    normalized = str(raw_value).strip().lower()
+    aliases = {
+        "integer": "int",
+        "rounded_int": "int",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in VALID_OUTPUT_TYPES:
+        raise ValueError(
+            f"Unsupported mapping output_type '{raw_value}'. "
+            f"Expected one of: {', '.join(sorted(VALID_OUTPUT_TYPES))}."
+        )
+    return normalized
+
+
+def _mapping_from_dict_entry(
+    entry: Mapping[str, object],
+    source_field: str,
+    target_column: str,
+) -> ColumnMapping:
+    """Build one mapping from a dictionary-style config entry.
+
+    Parameters:
+        entry: Original mapping dictionary.
+        source_field: Resolved source OH5 field name.
+        target_column: Resolved target ANG column name.
+
+    Returns:
+        ``ColumnMapping`` with transform options.
+
+    Raises:
+        ValueError: If scale config is invalid.
+    """
+
+    scale_enabled = bool(entry.get("scale_enabled", False))
+    target_min_raw = entry.get("scale_target_min")
+    target_max_raw = entry.get("scale_target_max")
+
+    scale_payload = entry.get("scale")
+    if isinstance(scale_payload, Mapping):
+        scale_enabled = True
+        if target_min_raw is None:
+            target_min_raw = scale_payload.get("target_min")
+        if target_max_raw is None:
+            target_max_raw = scale_payload.get("target_max")
+    elif isinstance(scale_payload, bool):
+        scale_enabled = scale_payload
+    elif scale_payload is not None:
+        raise ValueError(
+            "Mapping key 'scale' must be boolean or mapping with target_min/target_max."
+        )
+
+    output_type_raw = entry.get("output_type", entry.get("dtype", "float"))
+    output_type = _normalize_output_type(str(output_type_raw))
+
+    return ColumnMapping(
+        source_field=source_field,
+        target_column=target_column,
+        locked=False,
+        scale_enabled=scale_enabled,
+        scale_target_min=float(target_min_raw) if target_min_raw is not None else None,
+        scale_target_max=float(target_max_raw) if target_max_raw is not None else None,
+        output_type=output_type,
+    )
+
+
+def _validate_mapping_configuration(mapping: ColumnMapping) -> None:
+    """Validate one mapping's transform configuration.
+
+    Parameters:
+        mapping: Mapping to validate.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If transform configuration is inconsistent.
+    """
+
+    _normalize_output_type(mapping.output_type)
+    if not mapping.scale_enabled:
+        return
+
+    if mapping.scale_target_min is None or mapping.scale_target_max is None:
+        raise ValueError(
+            f"Mapping '{mapping.source_field} -> {mapping.target_column}' enables scaling "
+            "but does not define scale_target_min/scale_target_max."
+        )
+    if not np.isfinite(mapping.scale_target_min) or not np.isfinite(mapping.scale_target_max):
+        raise ValueError(
+            f"Mapping '{mapping.source_field} -> {mapping.target_column}' has non-finite "
+            "scale bounds."
+        )
+    if np.isclose(mapping.scale_target_min, mapping.scale_target_max):
+        raise ValueError(
+            f"Mapping '{mapping.source_field} -> {mapping.target_column}' has identical "
+            "scale bounds."
+        )
+
+
+def _mapping_description(mapping: ColumnMapping) -> str:
+    """Build a compact description of one mapping entry.
+
+    Parameters:
+        mapping: Mapping entry.
+
+    Returns:
+        Human-readable mapping description.
+    """
+
+    suffix_parts: list[str] = []
+    if mapping.scale_enabled:
+        suffix_parts.append(
+            f"scale=[{mapping.scale_target_min:.6g},{mapping.scale_target_max:.6g}]"
+        )
+    if mapping.output_type != "float":
+        suffix_parts.append(f"type={mapping.output_type}")
+    suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+    return f"{mapping.source_field} ---> {mapping.target_column}{suffix}"
+
+
+def infer_ang_column_type_hints(
+    template: AngTemplate,
+    max_rows: int = 200,
+) -> dict[str, str]:
+    """Infer simple type hints for ANG columns from template data rows.
+
+    Parameters:
+        template: Parsed ANG template.
+        max_rows: Maximum number of numeric rows to inspect.
+
+    Returns:
+        Mapping from column name to ``int`` or ``float``.
+    """
+
+    column_count = len(template.column_headers)
+    observed_any = [False] * column_count
+    observed_int_only = [True] * column_count
+    inspected_rows = 0
+
+    for line in template.body_lines:
+        parts = line.split()
+        if len(parts) != column_count:
+            continue
+        for index, token in enumerate(parts):
+            observed_any[index] = True
+            if INT_TOKEN_PATTERN.fullmatch(token) is None:
+                observed_int_only[index] = False
+        inspected_rows += 1
+        if inspected_rows >= max_rows:
+            break
+
+    hints: dict[str, str] = {}
+    for index, column in enumerate(template.column_headers):
+        if observed_any[index] and observed_int_only[index]:
+            hints[column] = "int"
+        else:
+            hints[column] = "float"
+    return hints
+
+
+def _resolve_mapping_output_type(
+    mapping: ColumnMapping,
+    target_hints: Mapping[str, str],
+) -> str:
+    """Resolve concrete output token type for one mapping.
+
+    Parameters:
+        mapping: Mapping entry.
+        target_hints: Inferred ANG column type hints.
+
+    Returns:
+        ``int`` or ``float``.
+    """
+
+    requested = _normalize_output_type(mapping.output_type)
+    if requested == "auto":
+        return "int" if target_hints.get(mapping.target_column) == "int" else "float"
+    return requested
+
+
+def _apply_mapping_transform(
+    source_values: np.ndarray,
+    mapping: ColumnMapping,
+    logger: logging.Logger,
+) -> np.ndarray:
+    """Apply optional scaling transform for one mapping.
+
+    Parameters:
+        source_values: Source values already sanitized to finite ``float64``.
+        mapping: Mapping entry containing transform settings.
+        logger: Logger instance.
+
+    Returns:
+        Transformed ``float64`` array.
+    """
+
+    values = np.asarray(source_values, dtype=np.float64).copy()
+    if not mapping.scale_enabled:
+        return values
+
+    source_min = float(np.min(values))
+    source_max = float(np.max(values))
+    source_span = source_max - source_min
+    target_min = float(mapping.scale_target_min)
+    target_max = float(mapping.scale_target_max)
+    if np.isclose(source_span, 0.0):
+        logger.warning(
+            "Mapping '%s -> %s' has constant source values (min=max=%s). "
+            "Using scale_target_min=%s for all rows.",
+            mapping.source_field,
+            mapping.target_column,
+            source_min,
+            target_min,
+        )
+        values.fill(target_min)
+        return values
+
+    return ((values - source_min) / source_span) * (target_max - target_min) + target_min
+
+
 
 def resolve_mappings(
     template: AngTemplate,
     catalog: Oh5ScalarCatalog,
-    user_mappings: Optional[Iterable[ColumnMapping | Mapping[str, str] | Sequence[str]]] = None,
+    user_mappings: Optional[
+        Iterable[ColumnMapping | Mapping[str, object] | Sequence[str]]
+    ] = None,
     logger: Optional[logging.Logger] = None,
 ) -> list[ColumnMapping]:
     """Resolve locked and user-defined source-to-target mappings.
@@ -430,7 +677,15 @@ def resolve_mappings(
                 f"Locked ANG column '{target_column}' requires OH5 field '{source_hint}', but it was not found."
             )
         resolved.append(
-            ColumnMapping(source_field=source_field, target_column=target_column, locked=True)
+            ColumnMapping(
+                source_field=source_field,
+                target_column=target_column,
+                locked=True,
+                scale_enabled=False,
+                scale_target_min=None,
+                scale_target_max=None,
+                output_type="float",
+            )
         )
         assigned_targets.add(target_norm)
 
@@ -454,13 +709,39 @@ def resolve_mappings(
                 f"ANG column '{target_column}' is mapped more than once."
             )
 
-        resolved.append(
-            ColumnMapping(source_field=source_field, target_column=target_column, locked=False)
-        )
+        if isinstance(entry, ColumnMapping):
+            mapping = ColumnMapping(
+                source_field=source_field,
+                target_column=target_column,
+                locked=False,
+                scale_enabled=bool(entry.scale_enabled),
+                scale_target_min=entry.scale_target_min,
+                scale_target_max=entry.scale_target_max,
+                output_type=_normalize_output_type(entry.output_type),
+            )
+        elif isinstance(entry, Mapping):
+            mapping = _mapping_from_dict_entry(
+                entry=entry,
+                source_field=source_field,
+                target_column=target_column,
+            )
+        else:
+            mapping = ColumnMapping(
+                source_field=source_field,
+                target_column=target_column,
+                locked=False,
+                scale_enabled=False,
+                scale_target_min=None,
+                scale_target_max=None,
+                output_type="float",
+            )
+
+        _validate_mapping_configuration(mapping)
+        resolved.append(mapping)
         assigned_targets.add(target_norm)
 
     mapping_text = "; ".join(
-        f"{item.source_field} ---> {item.target_column}{' [locked]' if item.locked else ''}"
+        f"{_mapping_description(item)}{' [locked]' if item.locked else ''}"
         for item in resolved
     )
     log.info("Resolved mappings: %s", mapping_text if mapping_text else "(none)")
@@ -478,24 +759,30 @@ def format_mapping_note_line(mappings: Sequence[ColumnMapping]) -> str:
         Header comment line terminated with newline.
     """
 
-    payload = "; ".join(f"{m.source_field} ---> {m.target_column}" for m in mappings)
+    payload = "; ".join(_mapping_description(m) for m in mappings)
     return f"# KBA_OH5_TO_ANG_MAPPING: {payload}\n"
 
 
 
-def _format_ang_value(value: float) -> str:
+def _format_ang_value(value: float, output_type: str) -> str:
     """Format numeric values for ANG output.
 
     Parameters:
         value: Numeric value to write.
+        output_type: Concrete output type (``float`` or ``int``).
 
     Returns:
         String token for ANG data row output.
     """
 
     val = float(value)
+    resolved_output_type = _normalize_output_type(output_type)
+    if resolved_output_type == "auto":
+        resolved_output_type = "float"
     if not np.isfinite(val):
-        return "0.000000"
+        return "0" if resolved_output_type == "int" else "0.000000"
+    if resolved_output_type == "int":
+        return str(int(np.rint(val)))
     return f"{val:.6f}"
 
 
@@ -532,7 +819,9 @@ def export_with_mappings(
     column_indices = {
         column: index for index, column in enumerate(template.column_headers)
     }
-    source_arrays: dict[str, np.ndarray] = {}
+    target_hints = infer_ang_column_type_hints(template)
+    source_arrays: dict[ColumnMapping, np.ndarray] = {}
+    output_types: dict[ColumnMapping, str] = {}
     for mapping in mappings:
         arr = catalog.fields[mapping.source_field]
         if arr.size != template.expected_pixels:
@@ -540,12 +829,18 @@ def export_with_mappings(
                 f"Mapped source field '{mapping.source_field}' length {arr.size} "
                 f"does not match expected pixel count {template.expected_pixels}."
             )
-        source_arrays[mapping.source_field] = np.nan_to_num(
+        sanitized = np.nan_to_num(
             np.asarray(arr, dtype=np.float64),
             nan=0.0,
             posinf=0.0,
             neginf=0.0,
         )
+        source_arrays[mapping] = _apply_mapping_transform(
+            source_values=sanitized,
+            mapping=mapping,
+            logger=log,
+        )
+        output_types[mapping] = _resolve_mapping_output_type(mapping, target_hints)
 
     header_lines = list(template.header_lines)
     if include_mapping_note and mappings:
@@ -566,8 +861,11 @@ def export_with_mappings(
 
         for mapping in mappings:
             target_index = column_indices[mapping.target_column]
-            source_values = source_arrays[mapping.source_field]
-            parts[target_index] = _format_ang_value(source_values[pixel_index])
+            source_values = source_arrays[mapping]
+            parts[target_index] = _format_ang_value(
+                source_values[pixel_index],
+                output_type=output_types[mapping],
+            )
 
         rewritten_body.append("  ".join(parts) + "\n")
         pixel_index += 1
@@ -586,7 +884,9 @@ def export_with_mappings(
 def export_oh5_to_ang(
     oh5_path: Path | str,
     ang_path: Path | str,
-    user_mappings: Optional[Iterable[ColumnMapping | Mapping[str, str] | Sequence[str]]] = None,
+    user_mappings: Optional[
+        Iterable[ColumnMapping | Mapping[str, object] | Sequence[str]]
+    ] = None,
     output_ang_path: Optional[Path | str] = None,
     include_mapping_note: bool = False,
     logger: Optional[logging.Logger] = None,

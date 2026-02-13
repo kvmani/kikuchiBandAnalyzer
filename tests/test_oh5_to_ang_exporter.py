@@ -292,3 +292,100 @@ def test_export_can_include_mapping_note_line(tmp_path) -> None:
     text = output_path.read_text(encoding="utf-8")
     assert "# KBA_OH5_TO_ANG_MAPPING:" in text
     assert "Band_Width ---> PRIAS Bottom Strip" in text
+
+
+def test_export_can_scale_and_round_to_int(tmp_path) -> None:
+    """Exporter should support per-mapping scale-to-range and rounded int output."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+    output_path = tmp_path / "scan_exported_scaled_int.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    export_oh5_to_ang(
+        oh5_path=oh5_path,
+        ang_path=ang_path,
+        user_mappings=[
+            {
+                "source": "psnr",
+                "target": "SEM",
+                "scale_enabled": True,
+                "scale_target_min": 20000.0,
+                "scale_target_max": 23000.0,
+                "output_type": "int",
+            }
+        ],
+        output_ang_path=output_path,
+        include_mapping_note=False,
+    )
+
+    rows = _read_data_rows(output_path, ncols=len(headers))
+    assert len(rows) == nrows * ncols
+
+    # psnr is linearly sampled [20, 21, 22, 23, 24, 25], scaled to [20000, 23000].
+    expected_sem_tokens = ["20000", "20600", "21200", "21800", "22400", "23000"]
+    assert [row[8] for row in rows] == expected_sem_tokens
+
+
+def test_export_rejects_invalid_scale_bounds(tmp_path) -> None:
+    """Exporter should reject mappings with identical scale min/max bounds."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    with pytest.raises(ValueError, match="identical"):
+        export_oh5_to_ang(
+            oh5_path=oh5_path,
+            ang_path=ang_path,
+            user_mappings=[
+                {
+                    "source": "Band_Width",
+                    "target": "IQ",
+                    "scale_enabled": True,
+                    "scale_target_min": 100.0,
+                    "scale_target_max": 100.0,
+                    "output_type": "float",
+                }
+            ],
+        )

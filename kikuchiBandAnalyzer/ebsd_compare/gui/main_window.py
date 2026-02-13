@@ -117,7 +117,9 @@ class MapCanvas(FigureCanvas):
         self._overlay_line_width = 2.0
         self._overlay_line_visible = True
         self._reset_callbacks: List[Callable[[MapCanvas], None]] = []
-        self._axes.set_title(title)
+        self._title_fontsize: Optional[float] = None
+        self._title_pad: Optional[float] = None
+        self._apply_title()
         self._axes.set_xticks([])
         self._axes.set_yticks([])
 
@@ -130,6 +132,42 @@ class MapCanvas(FigureCanvas):
         """
 
         return self._axes
+
+    def _apply_title(self) -> None:
+        """Apply the currently stored title and style settings."""
+
+        title_kwargs: dict[str, float] = {}
+        if self._title_fontsize is not None:
+            title_kwargs["fontsize"] = float(self._title_fontsize)
+        if self._title_pad is not None:
+            title_kwargs["pad"] = float(self._title_pad)
+        self._axes.set_title(self._title, **title_kwargs)
+
+    def set_title(
+        self,
+        title: str,
+        *,
+        fontsize: Optional[float] = None,
+        pad: Optional[float] = None,
+    ) -> None:
+        """Update the canvas title.
+
+        Parameters:
+            title: New title text.
+            fontsize: Optional title font size.
+            pad: Optional title padding.
+
+        Returns:
+            None.
+        """
+
+        self._title = str(title)
+        if fontsize is not None:
+            self._title_fontsize = float(fontsize)
+        if pad is not None:
+            self._title_pad = float(pad)
+        self._apply_title()
+        self.draw_idle()
 
     def update_data(
         self,
@@ -155,7 +193,7 @@ class MapCanvas(FigureCanvas):
                 reset_view = True
         if reset_view or self._image is None:
             self._axes.clear()
-            self._axes.set_title(self._title)
+            self._apply_title()
             self._axes.set_xticks([])
             self._axes.set_yticks([])
             self._image = self._axes.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
@@ -412,6 +450,7 @@ class MapPanel(QtWidgets.QWidget):
 
         super().__init__(parent=parent)
         self._canvas = MapCanvas(title)
+        self._canvas.set_title(title, fontsize=8.5, pad=1.5)
         self._toolbar = CompactNavigationToolbar(self._canvas, self)
         self._toolbar.setOrientation(QtCore.Qt.Vertical)
         self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
@@ -493,6 +532,18 @@ class MapPanel(QtWidgets.QWidget):
         """
 
         return self._canvas
+
+    def set_title(self, title: str) -> None:
+        """Set the map title text.
+
+        Parameters:
+            title: Title for the map axes.
+
+        Returns:
+            None.
+        """
+
+        self._canvas.set_title(title, fontsize=8.5, pad=1.5)
 
     def contrast_values(self) -> Tuple[float, float]:
         """Return the low/high contrast percentiles.
@@ -629,6 +680,18 @@ class PatternPanel(QtWidgets.QWidget):
 
         return self._canvas
 
+    def set_title(self, title: str) -> None:
+        """Set the pattern panel title.
+
+        Parameters:
+            title: Title for the pattern axes.
+
+        Returns:
+            None.
+        """
+
+        self._canvas.set_title(title)
+
 class EbsdCompareMainWindow(QtWidgets.QMainWindow):
     """Main window for comparing two EBSD scans."""
 
@@ -674,11 +737,15 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._pattern_reset_view = True
         self._last_selected_xy: Optional[Tuple[int, int]] = None
         self._band_profile_plot: Optional[BandProfilePlot] = None
+        self._scan_a_name_edit: Optional[QtWidgets.QLineEdit] = None
+        self._scan_b_name_edit: Optional[QtWidgets.QLineEdit] = None
         self._profile_normalize_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._profile_markers_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._overlay_line_a_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._overlay_line_b_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._band_profile_status_label: Optional[QtWidgets.QLabel] = None
+        self._default_scan_a_name = "Scan A"
+        self._default_scan_b_name = "Scan B"
         self._exporter = Oh5ComparisonExporter(logger=self._logger)
         auto_config = self._config.get("auto_scan", {})
         self._auto_min_ms = int(auto_config.get("min_delay_ms", 25))
@@ -726,6 +793,22 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._file_b_edit.setToolTip(
             "Path to scan B (.oh5). Required. Example: testData/Test_Ti_noisy.oh5"
         )
+        self._scan_a_name_edit = QtWidgets.QLineEdit()
+        self._scan_b_name_edit = QtWidgets.QLineEdit()
+        self._scan_a_name_edit.setMinimumWidth(220)
+        self._scan_a_name_edit.setMaximumWidth(340)
+        self._scan_b_name_edit.setMinimumWidth(220)
+        self._scan_b_name_edit.setMaximumWidth(340)
+        self._scan_a_name_edit.setPlaceholderText("Display name for scan A plots")
+        self._scan_b_name_edit.setPlaceholderText("Display name for scan B plots")
+        self._scan_a_name_edit.textChanged.connect(self._on_scan_name_changed)
+        self._scan_b_name_edit.textChanged.connect(self._on_scan_name_changed)
+        self._scan_a_name_edit.setToolTip(
+            "Display name used in map/pattern/profile plot labels for scan A."
+        )
+        self._scan_b_name_edit.setToolTip(
+            "Display name used in map/pattern/profile plot labels for scan B."
+        )
         self._file_a_button.setToolTip("Browse for the scan A file.")
         self._file_b_button.setToolTip("Browse for the scan B file.")
         self._load_button.setToolTip(
@@ -765,6 +848,16 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         top_row.addWidget(self._load_button)
         top_row.addStretch(1)
         layout.addLayout(top_row)
+
+        name_row = QtWidgets.QHBoxLayout()
+        name_row.setSpacing(6)
+        name_row.addWidget(QtWidgets.QLabel("Label A"))
+        name_row.addWidget(self._scan_a_name_edit)
+        name_row.addSpacing(8)
+        name_row.addWidget(QtWidgets.QLabel("Label B"))
+        name_row.addWidget(self._scan_b_name_edit)
+        name_row.addStretch(1)
+        layout.addLayout(name_row)
 
         control_row = QtWidgets.QHBoxLayout()
         control_row.setSpacing(6)
@@ -911,6 +1004,11 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._probe_table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.Stretch
         )
+        self._probe_table.setMinimumWidth(220)
+        self._probe_table.setMaximumWidth(280)
+        self._probe_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding
+        )
         probe_layout.addWidget(self._probe_table)
 
         pattern_group = QtWidgets.QGroupBox("Pattern + Band Profile Comparison")
@@ -938,12 +1036,13 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._band_profile_plot.setSizePolicy(
             QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
         )
+        self._apply_scan_display_names_to_plots()
         self._band_profile_plot.setToolTip(
             "Band profile comparison for the selected pixel."
         )
-        patterns_row.addWidget(self._pattern_panel_a, stretch=1)
-        patterns_row.addWidget(self._pattern_panel_b, stretch=1)
-        patterns_row.addWidget(self._band_profile_plot, stretch=1)
+        patterns_row.addWidget(self._pattern_panel_a, stretch=2)
+        patterns_row.addWidget(self._pattern_panel_b, stretch=2)
+        patterns_row.addWidget(self._band_profile_plot, stretch=3)
         pattern_layout.addLayout(patterns_row, stretch=1)
 
         controls_row = QtWidgets.QHBoxLayout()
@@ -974,15 +1073,15 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         controls_row.addWidget(self._band_profile_status_label)
         pattern_layout.addLayout(controls_row)
         probe_layout.addWidget(pattern_group)
-        probe_layout.setStretch(0, 1)
-        probe_layout.setStretch(1, 3)
+        probe_layout.setStretch(0, 0)
+        probe_layout.setStretch(1, 1)
         self._pattern_group = pattern_group
         layout.addLayout(probe_layout)
         self._connect_pattern_view_sync()
         layout.setStretch(0, 0)
         layout.setStretch(1, 0)
         layout.setStretch(2, 0)
-        layout.setStretch(3, 6)
+        layout.setStretch(3, 5)
         layout.setStretch(4, 4)
         self.setCentralWidget(central_widget)
         log_config = self._config.get("logging", {})
@@ -1072,6 +1171,8 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         dataset_b = OH5ScanFileReader.from_path(path_b, field_aliases=field_aliases)
         self._file_a_edit.setText(str(path_a))
         self._file_b_edit.setText(str(path_b))
+        self._scan_a_name_edit.setText(path_a.stem or self._default_scan_a_name)
+        self._scan_b_name_edit.setText(path_b.stem or self._default_scan_b_name)
         self.load_scan_datasets(dataset_a, dataset_b)
 
     def load_scan_datasets(self, dataset_a: ScanDataset, dataset_b: ScanDataset) -> None:
@@ -1090,6 +1191,13 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         self._scan_b = dataset_b
         self._file_a_edit.setText(str(dataset_a.file_path))
         self._file_b_edit.setText(str(dataset_b.file_path))
+        self._scan_a_name_edit.setText(
+            dataset_a.file_path.stem or self._default_scan_a_name
+        )
+        self._scan_b_name_edit.setText(
+            dataset_b.file_path.stem or self._default_scan_b_name
+        )
+        self._apply_scan_display_names_to_plots()
         self._logger.info("Loaded scan-A: %s", dataset_a.file_path)
         self._logger.info(
             "Detected scan-A shape: (%s x %s)", dataset_a.nx, dataset_a.ny
@@ -1215,6 +1323,7 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Scan A")
         if path:
             self._file_a_edit.setText(path)
+            self._scan_a_name_edit.setText(Path(path).stem or self._default_scan_a_name)
 
     def _browse_file_b(self) -> None:
         """Open a file dialog to choose scan B."""
@@ -1222,6 +1331,56 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Scan B")
         if path:
             self._file_b_edit.setText(path)
+            self._scan_b_name_edit.setText(Path(path).stem or self._default_scan_b_name)
+
+    def _scan_display_name(self, label: str) -> str:
+        """Return the current display name for scan A or scan B.
+
+        Parameters:
+            label: Scan label key ("A" or "B").
+
+        Returns:
+            Display name for the requested scan.
+        """
+
+        if label == "A":
+            text = (
+                self._scan_a_name_edit.text().strip()
+                if self._scan_a_name_edit is not None
+                else ""
+            )
+            return text or self._default_scan_a_name
+        text = (
+            self._scan_b_name_edit.text().strip()
+            if self._scan_b_name_edit is not None
+            else ""
+        )
+        return text or self._default_scan_b_name
+
+    def _apply_scan_display_names_to_plots(self) -> None:
+        """Apply current scan display names to map/pattern/profile plot labels."""
+
+        name_a = self._scan_display_name("A")
+        name_b = self._scan_display_name("B")
+        if self._map_panel_a is not None:
+            self._map_panel_a.set_title(name_a)
+        if self._map_panel_b is not None:
+            self._map_panel_b.set_title(name_b)
+        if self._map_panel_d is not None:
+            self._map_panel_d.set_title("Δ/Ratio")
+        if self._pattern_panel_a is not None:
+            self._pattern_panel_a.set_title(name_a)
+        if self._pattern_panel_b is not None:
+            self._pattern_panel_b.set_title(name_b)
+        if self._band_profile_plot is not None:
+            self._band_profile_plot.set_series_labels(name_a, name_b)
+
+    def _on_scan_name_changed(self, _text: str = "") -> None:
+        """Handle edits to scan display names and refresh affected plot labels."""
+
+        self._apply_scan_display_names_to_plots()
+        if self._last_selected_xy is not None:
+            self._update_band_profile_panels(*self._last_selected_xy)
 
     def _load_from_inputs(self) -> None:
         """Load scans based on current input paths."""
@@ -2270,19 +2429,21 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
             central_line_b = payload_b_raw.central_line
         self._update_pattern_overlay("B", central_line_b, show_overlay_b)
 
+        name_a = self._scan_display_name("A")
+        name_b = self._scan_display_name("B")
         status_parts: list[str] = []
         if payload_a_raw.profile is None:
-            status_parts.append("A: band_profile unavailable")
+            status_parts.append(f"{name_a}: band_profile unavailable")
         elif payload_a is None:
-            status_parts.append("A: no valid band")
+            status_parts.append(f"{name_a}: no valid band")
         if bxby is None:
-            status_parts.append("B: out of bounds")
+            status_parts.append(f"{name_b}: out of bounds")
         elif payload_b_raw is not None and payload_b_raw.profile is None:
-            status_parts.append("B: band_profile unavailable")
+            status_parts.append(f"{name_b}: band_profile unavailable")
         elif payload_b is None:
-            status_parts.append("B: no valid band")
+            status_parts.append(f"{name_b}: no valid band")
         if bxby is not None and self._alignment_result is not None:
-            status_parts.append(f"B@({bxby[0]},{bxby[1]})")
+            status_parts.append(f"{name_b}@({bxby[0]},{bxby[1]})")
         status_text = " | ".join(status_parts)
         if self._band_profile_status_label is not None:
             self._band_profile_status_label.setText(status_text)

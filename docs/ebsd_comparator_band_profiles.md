@@ -12,6 +12,8 @@ When you click a pixel:
    - The GUI plots `band_profile` for Scan A and Scan B on a shared plot (toggleable normalization).
    - The GUI draws vertical markers for:
      - `band_start_idx`, `band_end_idx`, and (if present) `central_peak_idx`.
+   - The scan label fields (below file paths) auto-fill from file basenames and are editable.
+   - Marker lines are drawn without adding separate legend entries, so legends show only profile series labels.
 
 ## Required datasets
 
