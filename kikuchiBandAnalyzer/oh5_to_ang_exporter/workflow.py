@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -20,14 +22,29 @@ LOCKED_COLUMN_TO_SOURCE: dict[str, str] = {
 }
 INT_TOKEN_PATTERN = re.compile(r"^[+-]?\d+$")
 VALID_OUTPUT_TYPES = {"auto", "float", "int"}
+SUPPORTED_FORMULA_BINOPS: dict[type[ast.operator], Callable[[np.ndarray, np.ndarray], np.ndarray]] = {
+    ast.Add: np.add,
+    ast.Sub: np.subtract,
+    ast.Mult: np.multiply,
+    ast.Div: np.divide,
+    ast.Pow: np.power,
+}
+SUPPORTED_FORMULA_UNARYOPS: dict[type[ast.unaryop], Callable[[np.ndarray], np.ndarray]] = {
+    ast.UAdd: lambda value: value,
+    ast.USub: np.negative,
+}
 
 
 @dataclass(frozen=True)
 class ColumnMapping:
-    """Resolved mapping from one OH5 scalar field to one ANG column.
+    """Resolved mapping from OH5 scalar data to one ANG column.
 
     Parameters:
         source_field: Scalar dataset name from ``/<scan>/EBSD/Data`` in OH5.
+            Required when ``formula_expression`` is not provided.
+        formula_expression: Optional arithmetic expression using OH5 fields and
+            numeric constants (for example ``Band_Width * 100 + CI``). Required
+            when ``source_field`` is not provided.
         target_column: ANG column name from ``# COLUMN_HEADERS``.
         locked: True when the mapping is automatically enforced (non-overridable).
         scale_enabled: Whether to scale source min/max into a target range.
@@ -36,8 +53,9 @@ class ColumnMapping:
         output_type: Output token type. Supported values: ``auto``, ``float``, ``int``.
     """
 
-    source_field: str
+    source_field: Optional[str]
     target_column: str
+    formula_expression: Optional[str] = None
     locked: bool = False
     scale_enabled: bool = False
     scale_target_min: Optional[float] = None
@@ -373,29 +391,37 @@ def locked_target_columns(template: AngTemplate) -> tuple[str, ...]:
 
 def _coerce_mapping_entry(
     entry: ColumnMapping | Mapping[str, object] | Sequence[str],
-) -> tuple[str, str]:
-    """Coerce one mapping entry into ``(source_field, target_column)``.
+) -> tuple[Optional[str], str, Optional[str]]:
+    """Coerce one mapping entry into ``(source_field, target_column, formula)``.
 
     Parameters:
         entry: Mapping entry in dataclass, dict, or pair form.
 
     Returns:
-        Two-tuple of source OH5 field name and target ANG column name.
+        Source field (optional), target ANG column name, and formula expression
+        (optional).
 
     Raises:
         ValueError: If entry cannot be interpreted.
     """
 
     if isinstance(entry, ColumnMapping):
-        return entry.source_field, entry.target_column
+        return entry.source_field, entry.target_column, entry.formula_expression
     if isinstance(entry, Mapping):
         source = entry.get("source")
         target = entry.get("target")
-        if source is None or target is None:
+        formula = entry.get("formula", entry.get("expression"))
+        if target is None:
             raise ValueError(f"Invalid mapping dictionary: {entry!r}")
-        return str(source), str(target)
+        resolved_source = str(source).strip() if source is not None else None
+        resolved_formula = str(formula).strip() if formula is not None else None
+        if resolved_source == "":
+            resolved_source = None
+        if resolved_formula == "":
+            resolved_formula = None
+        return resolved_source, str(target), resolved_formula
     if isinstance(entry, Sequence) and len(entry) == 2:
-        return str(entry[0]), str(entry[1])
+        return str(entry[0]), str(entry[1]), None
     raise ValueError(f"Unsupported mapping entry: {entry!r}")
 
 
@@ -426,10 +452,204 @@ def _normalize_output_type(raw_value: str) -> str:
     return normalized
 
 
+def _mapping_source_label(mapping: ColumnMapping) -> str:
+    """Return a readable source label for logging and validation messages.
+
+    Parameters:
+        mapping: Mapping entry.
+
+    Returns:
+        Source field name, or formula expression when present.
+    """
+
+    if mapping.formula_expression:
+        return f"formula({mapping.formula_expression})"
+    if mapping.source_field:
+        return mapping.source_field
+    return "<unspecified source>"
+
+
+def _parse_formula_tree(expression: str) -> ast.Expression:
+    """Parse a formula expression into an AST tree.
+
+    Parameters:
+        expression: Raw formula expression text.
+
+    Returns:
+        Parsed ``ast.Expression`` tree.
+
+    Raises:
+        ValueError: If the expression has invalid syntax.
+    """
+
+    try:
+        parsed = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:
+        lineno = exc.lineno or 1
+        offset = exc.offset or 1
+        raise ValueError(
+            f"Invalid formula syntax '{expression}': {exc.msg} (line {lineno}, column {offset})."
+        ) from exc
+    if not isinstance(parsed, ast.Expression):
+        raise ValueError(f"Invalid formula expression: '{expression}'.")
+    return parsed
+
+
+def _resolve_formula_field_name(
+    raw_name: str,
+    normalized_fields: Mapping[str, str],
+) -> str:
+    """Resolve one formula variable name to an OH5 field.
+
+    Parameters:
+        raw_name: Variable identifier used in the formula.
+        normalized_fields: Mapping of normalized field keys to canonical names.
+
+    Returns:
+        Canonical OH5 field name.
+
+    Raises:
+        ValueError: If the variable does not map to an OH5 scalar field.
+    """
+
+    normalized = normalize_field_name(raw_name)
+    resolved = normalized_fields.get(normalized)
+    if resolved is None:
+        raise ValueError(
+            f"Unknown formula field '{raw_name}'. Use identifier-style field references "
+            "(letters/numbers/underscores); matching is case-insensitive and treats "
+            "spaces/hyphens in OH5 names as underscores."
+        )
+    return resolved
+
+
+def _validate_formula_node(
+    node: ast.AST,
+    normalized_fields: Mapping[str, str],
+) -> None:
+    """Validate that one AST node is allowed in a formula.
+
+    Parameters:
+        node: AST node to validate.
+        normalized_fields: Mapping of normalized OH5 field names.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If the node contains unsupported operations or variables.
+    """
+
+    if isinstance(node, ast.Expression):
+        _validate_formula_node(node.body, normalized_fields)
+        return
+    if isinstance(node, ast.BinOp):
+        if type(node.op) not in SUPPORTED_FORMULA_BINOPS:
+            raise ValueError(
+                "Unsupported formula operator. Supported operators are +, -, *, /, and **."
+            )
+        _validate_formula_node(node.left, normalized_fields)
+        _validate_formula_node(node.right, normalized_fields)
+        return
+    if isinstance(node, ast.UnaryOp):
+        if type(node.op) not in SUPPORTED_FORMULA_UNARYOPS:
+            raise ValueError("Unsupported unary operator in formula. Use +value or -value.")
+        _validate_formula_node(node.operand, normalized_fields)
+        return
+    if isinstance(node, ast.Name):
+        _resolve_formula_field_name(node.id, normalized_fields)
+        return
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise ValueError(
+                "Formula constants must be numeric (int/float)."
+            )
+        if not np.isfinite(float(node.value)):
+            raise ValueError("Formula constants must be finite numbers.")
+        return
+    raise ValueError(
+        "Unsupported formula expression component. Allowed: numeric constants, "
+        "field names, parentheses, +, -, *, /, **, and unary +/-."
+    )
+
+
+def _evaluate_formula_node(
+    node: ast.AST,
+    catalog: Oh5ScalarCatalog,
+    normalized_fields: Mapping[str, str],
+) -> np.ndarray:
+    """Evaluate one validated formula AST node into a numeric vector.
+
+    Parameters:
+        node: Validated AST node.
+        catalog: OH5 scalar field catalog.
+        normalized_fields: Mapping of normalized field names.
+
+    Returns:
+        ``float64`` array of shape ``(n_pixels,)``.
+
+    Raises:
+        ValueError: If evaluation fails for a supported node.
+    """
+
+    if isinstance(node, ast.Expression):
+        return _evaluate_formula_node(node.body, catalog, normalized_fields)
+    if isinstance(node, ast.BinOp):
+        op_func = SUPPORTED_FORMULA_BINOPS.get(type(node.op))
+        if op_func is None:
+            raise ValueError(
+                "Unsupported formula operator. Supported operators are +, -, *, /, and **."
+            )
+        left = _evaluate_formula_node(node.left, catalog, normalized_fields)
+        right = _evaluate_formula_node(node.right, catalog, normalized_fields)
+        return np.asarray(op_func(left, right), dtype=np.float64)
+    if isinstance(node, ast.UnaryOp):
+        op_func = SUPPORTED_FORMULA_UNARYOPS.get(type(node.op))
+        if op_func is None:
+            raise ValueError("Unsupported unary operator in formula. Use +value or -value.")
+        operand = _evaluate_formula_node(node.operand, catalog, normalized_fields)
+        return np.asarray(op_func(operand), dtype=np.float64)
+    if isinstance(node, ast.Name):
+        field_name = _resolve_formula_field_name(node.id, normalized_fields)
+        return np.asarray(catalog.fields[field_name], dtype=np.float64)
+    if isinstance(node, ast.Constant):
+        return np.full(catalog.n_pixels, float(node.value), dtype=np.float64)
+    raise ValueError(
+        "Unsupported formula expression component. Allowed: numeric constants, "
+        "field names, parentheses, +, -, *, /, **, and unary +/-."
+    )
+
+
+def _evaluate_formula_expression(
+    expression: str,
+    catalog: Oh5ScalarCatalog,
+    normalized_fields: Mapping[str, str],
+) -> np.ndarray:
+    """Parse, validate, and evaluate one formula expression.
+
+    Parameters:
+        expression: Formula expression text.
+        catalog: OH5 scalar field catalog.
+        normalized_fields: Mapping of normalized OH5 field names.
+
+    Returns:
+        ``float64`` array of computed values with one value per pixel.
+
+    Raises:
+        ValueError: If parsing, validation, or evaluation fails.
+    """
+
+    tree = _parse_formula_tree(expression)
+    _validate_formula_node(tree, normalized_fields)
+    values = _evaluate_formula_node(tree, catalog, normalized_fields)
+    return np.asarray(values, dtype=np.float64).reshape(catalog.n_pixels)
+
+
 def _mapping_from_dict_entry(
     entry: Mapping[str, object],
-    source_field: str,
+    source_field: Optional[str],
     target_column: str,
+    formula_expression: Optional[str],
 ) -> ColumnMapping:
     """Build one mapping from a dictionary-style config entry.
 
@@ -437,6 +657,7 @@ def _mapping_from_dict_entry(
         entry: Original mapping dictionary.
         source_field: Resolved source OH5 field name.
         target_column: Resolved target ANG column name.
+        formula_expression: Optional formula expression.
 
     Returns:
         ``ColumnMapping`` with transform options.
@@ -469,6 +690,7 @@ def _mapping_from_dict_entry(
     return ColumnMapping(
         source_field=source_field,
         target_column=target_column,
+        formula_expression=formula_expression,
         locked=False,
         scale_enabled=scale_enabled,
         scale_target_min=float(target_min_raw) if target_min_raw is not None else None,
@@ -477,11 +699,15 @@ def _mapping_from_dict_entry(
     )
 
 
-def _validate_mapping_configuration(mapping: ColumnMapping) -> None:
+def _validate_mapping_configuration(
+    mapping: ColumnMapping,
+    normalized_fields: Mapping[str, str],
+) -> None:
     """Validate one mapping's transform configuration.
 
     Parameters:
         mapping: Mapping to validate.
+        normalized_fields: Mapping of normalized OH5 field keys.
 
     Returns:
         None.
@@ -490,23 +716,41 @@ def _validate_mapping_configuration(mapping: ColumnMapping) -> None:
         ValueError: If transform configuration is inconsistent.
     """
 
+    source_is_set = bool(mapping.source_field and str(mapping.source_field).strip())
+    formula_is_set = bool(mapping.formula_expression and str(mapping.formula_expression).strip())
+    if source_is_set == formula_is_set:
+        raise ValueError(
+            f"Mapping for target '{mapping.target_column}' must define exactly one of "
+            "'source' or 'formula'."
+        )
+    if formula_is_set:
+        try:
+            _validate_formula_node(
+                _parse_formula_tree(str(mapping.formula_expression)),
+                normalized_fields=normalized_fields,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid formula for target '{mapping.target_column}': {exc}"
+            ) from exc
+
     _normalize_output_type(mapping.output_type)
     if not mapping.scale_enabled:
         return
 
     if mapping.scale_target_min is None or mapping.scale_target_max is None:
         raise ValueError(
-            f"Mapping '{mapping.source_field} -> {mapping.target_column}' enables scaling "
+            f"Mapping '{_mapping_source_label(mapping)} -> {mapping.target_column}' enables scaling "
             "but does not define scale_target_min/scale_target_max."
         )
     if not np.isfinite(mapping.scale_target_min) or not np.isfinite(mapping.scale_target_max):
         raise ValueError(
-            f"Mapping '{mapping.source_field} -> {mapping.target_column}' has non-finite "
+            f"Mapping '{_mapping_source_label(mapping)} -> {mapping.target_column}' has non-finite "
             "scale bounds."
         )
     if np.isclose(mapping.scale_target_min, mapping.scale_target_max):
         raise ValueError(
-            f"Mapping '{mapping.source_field} -> {mapping.target_column}' has identical "
+            f"Mapping '{_mapping_source_label(mapping)} -> {mapping.target_column}' has identical "
             "scale bounds."
         )
 
@@ -529,7 +773,7 @@ def _mapping_description(mapping: ColumnMapping) -> str:
     if mapping.output_type != "float":
         suffix_parts.append(f"type={mapping.output_type}")
     suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-    return f"{mapping.source_field} ---> {mapping.target_column}{suffix}"
+    return f"{_mapping_source_label(mapping)} ---> {mapping.target_column}{suffix}"
 
 
 def infer_ang_column_type_hints(
@@ -621,7 +865,7 @@ def _apply_mapping_transform(
         logger.warning(
             "Mapping '%s -> %s' has constant source values (min=max=%s). "
             "Using scale_target_min=%s for all rows.",
-            mapping.source_field,
+            _mapping_source_label(mapping),
             mapping.target_column,
             source_min,
             target_min,
@@ -690,13 +934,16 @@ def resolve_mappings(
         assigned_targets.add(target_norm)
 
     for entry in user_mappings or []:
-        source_raw, target_raw = _coerce_mapping_entry(entry)
-        source_norm = normalize_field_name(source_raw)
+        source_raw, target_raw, formula_raw = _coerce_mapping_entry(entry)
         target_norm = normalize_column_name(target_raw)
+        source_field: Optional[str] = None
+        formula_expression = formula_raw
 
-        source_field = normalized_fields.get(source_norm)
-        if source_field is None:
-            raise ValueError(f"Unknown OH5 source field: {source_raw}")
+        if source_raw is not None:
+            source_norm = normalize_field_name(source_raw)
+            source_field = normalized_fields.get(source_norm)
+            if source_field is None:
+                raise ValueError(f"Unknown OH5 source field: {source_raw}")
         target_column = normalized_columns.get(target_norm)
         if target_column is None:
             raise ValueError(f"Unknown ANG target column: {target_raw}")
@@ -713,6 +960,7 @@ def resolve_mappings(
             mapping = ColumnMapping(
                 source_field=source_field,
                 target_column=target_column,
+                formula_expression=formula_expression,
                 locked=False,
                 scale_enabled=bool(entry.scale_enabled),
                 scale_target_min=entry.scale_target_min,
@@ -724,11 +972,13 @@ def resolve_mappings(
                 entry=entry,
                 source_field=source_field,
                 target_column=target_column,
+                formula_expression=formula_expression,
             )
         else:
             mapping = ColumnMapping(
                 source_field=source_field,
                 target_column=target_column,
+                formula_expression=formula_expression,
                 locked=False,
                 scale_enabled=False,
                 scale_target_min=None,
@@ -736,7 +986,7 @@ def resolve_mappings(
                 output_type="float",
             )
 
-        _validate_mapping_configuration(mapping)
+        _validate_mapping_configuration(mapping, normalized_fields=normalized_fields)
         resolved.append(mapping)
         assigned_targets.add(target_norm)
 
@@ -820,13 +1070,32 @@ def export_with_mappings(
         column: index for index, column in enumerate(template.column_headers)
     }
     target_hints = infer_ang_column_type_hints(template)
+    normalized_fields = {
+        normalize_field_name(field): field for field in catalog.fields.keys()
+    }
     source_arrays: dict[ColumnMapping, np.ndarray] = {}
     output_types: dict[ColumnMapping, str] = {}
     for mapping in mappings:
-        arr = catalog.fields[mapping.source_field]
+        if mapping.formula_expression:
+            try:
+                arr = _evaluate_formula_expression(
+                    expression=mapping.formula_expression,
+                    catalog=catalog,
+                    normalized_fields=normalized_fields,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid formula for target '{mapping.target_column}': {exc}"
+                ) from exc
+        elif mapping.source_field:
+            arr = catalog.fields[mapping.source_field]
+        else:
+            raise ValueError(
+                f"Mapping for target '{mapping.target_column}' does not define source or formula."
+            )
         if arr.size != template.expected_pixels:
             raise ValueError(
-                f"Mapped source field '{mapping.source_field}' length {arr.size} "
+                f"Mapped source '{_mapping_source_label(mapping)}' length {arr.size} "
                 f"does not match expected pixel count {template.expected_pixels}."
             )
         sanitized = np.nan_to_num(

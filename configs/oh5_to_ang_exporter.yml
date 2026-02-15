@@ -12,6 +12,9 @@ include_mapping_note: false
 #   phi1 <- Phi1
 #   PHI  <- Phi
 #   phi2 <- Phi2
+# Each mapping must define exactly one of:
+#   - source: <oh5_field_name>
+#   - formula: <expression_using_oh5_fields_and_constants>
 mappings:
   - source: Fit
     target: SEM
@@ -23,4 +26,7 @@ mappings:
     output_type: int
   - source: CI
     target: IQ
+    output_type: float
+  - formula: Band_Width * 100 + CI
+    target: PRIAS Top Strip
     output_type: float

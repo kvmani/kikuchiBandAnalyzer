@@ -49,8 +49,10 @@ def _parse_mappings(raw: Any) -> list[ColumnMapping]:
         List of ColumnMapping entries.
 
     Raises:
-        ValueError: If the mapping format is invalid. Optional transform keys are:
-            ``scale_enabled``, ``scale_target_min``, ``scale_target_max``, ``output_type``.
+        ValueError: If the mapping format is invalid. Each entry must define
+            exactly one of ``source`` or ``formula`` plus ``target``. Optional
+            transform keys are: ``scale_enabled``, ``scale_target_min``,
+            ``scale_target_max``, ``output_type``.
     """
 
     if raw is None:
@@ -63,9 +65,17 @@ def _parse_mappings(raw: Any) -> list[ColumnMapping]:
         if not isinstance(entry, dict):
             raise ValueError(f"Mapping entries must be dictionaries, got: {entry!r}")
         source = entry.get("source")
+        formula = entry.get("formula", entry.get("expression"))
         target = entry.get("target")
-        if source is None or target is None:
-            raise ValueError(f"Mapping entry must include 'source' and 'target': {entry!r}")
+        if target is None:
+            raise ValueError(f"Mapping entry must include 'target': {entry!r}")
+        has_source = source is not None and str(source).strip() != ""
+        has_formula = formula is not None and str(formula).strip() != ""
+        if has_source == has_formula:
+            raise ValueError(
+                "Mapping entry must define exactly one of 'source' or 'formula': "
+                f"{entry!r}"
+            )
 
         scale_enabled = bool(entry.get("scale_enabled", False))
         scale_payload = entry.get("scale")
@@ -87,8 +97,9 @@ def _parse_mappings(raw: Any) -> list[ColumnMapping]:
         output_type = str(entry.get("output_type", entry.get("dtype", "float")))
         items.append(
             ColumnMapping(
-                source_field=str(source),
+                source_field=str(source).strip() if has_source else None,
                 target_column=str(target),
+                formula_expression=str(formula).strip() if has_formula else None,
                 locked=False,
                 scale_enabled=scale_enabled,
                 scale_target_min=float(scale_min_raw) if scale_min_raw is not None else None,

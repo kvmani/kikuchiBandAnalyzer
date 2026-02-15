@@ -347,6 +347,181 @@ def test_export_can_scale_and_round_to_int(tmp_path) -> None:
     assert [row[8] for row in rows] == expected_sem_tokens
 
 
+def test_export_can_map_formula_expression(tmp_path) -> None:
+    """Exporter should compute formula expressions using OH5 scalar fields."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+    output_path = tmp_path / "scan_exported_formula.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    export_oh5_to_ang(
+        oh5_path=oh5_path,
+        ang_path=ang_path,
+        user_mappings=[
+            {
+                "formula": "band_width * 100 + CI",
+                "target": "IQ",
+                "output_type": "float",
+            }
+        ],
+        output_ang_path=output_path,
+    )
+
+    rows = _read_data_rows(output_path, ncols=len(headers))
+    assert len(rows) == nrows * ncols
+    expected_iq_tokens = [
+        "1000.100000",
+        "1100.200000",
+        "1200.300000",
+        "1300.400000",
+        "1400.500000",
+        "1500.600000",
+    ]
+    assert [row[5] for row in rows] == expected_iq_tokens
+
+
+def test_export_rejects_invalid_formula_field(tmp_path) -> None:
+    """Exporter should reject formulas that reference unknown OH5 fields."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    with pytest.raises(ValueError, match="Invalid formula for target 'IQ'"):
+        export_oh5_to_ang(
+            oh5_path=oh5_path,
+            ang_path=ang_path,
+            user_mappings=[
+                {
+                    "formula": "Band_Width + missing_field",
+                    "target": "IQ",
+                }
+            ],
+        )
+
+
+def test_export_rejects_invalid_formula_syntax(tmp_path) -> None:
+    """Exporter should reject formulas with invalid syntax."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    with pytest.raises(ValueError, match="Invalid formula syntax"):
+        export_oh5_to_ang(
+            oh5_path=oh5_path,
+            ang_path=ang_path,
+            user_mappings=[
+                {
+                    "formula": "Band_Width *",
+                    "target": "IQ",
+                }
+            ],
+        )
+
+
+def test_export_rejects_mapping_with_source_and_formula(tmp_path) -> None:
+    """Exporter should reject mappings that specify both source and formula."""
+
+    nrows = 2
+    ncols = 3
+    oh5_path = tmp_path / "scan_modified.oh5"
+    ang_path = tmp_path / "scan.ang"
+
+    headers = [
+        "phi1",
+        "PHI",
+        "phi2",
+        "x",
+        "y",
+        "IQ",
+        "CI",
+        "Phase index",
+        "SEM",
+        "Fit",
+        "PRIAS Bottom Strip",
+        "PRIAS Center Square",
+        "PRIAS Top Strip",
+    ]
+
+    _create_test_oh5(oh5_path, scan_name="Scan", nrows=nrows, ncols=ncols)
+    _create_test_ang(ang_path, nrows=nrows, ncols_even=ncols, headers=headers)
+
+    with pytest.raises(ValueError, match="exactly one of 'source' or 'formula'"):
+        export_oh5_to_ang(
+            oh5_path=oh5_path,
+            ang_path=ang_path,
+            user_mappings=[
+                {
+                    "source": "Band_Width",
+                    "formula": "Band_Width + CI",
+                    "target": "IQ",
+                }
+            ],
+        )
+
+
 def test_export_rejects_invalid_scale_bounds(tmp_path) -> None:
     """Exporter should reject mappings with identical scale min/max bounds."""
 

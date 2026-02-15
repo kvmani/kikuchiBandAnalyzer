@@ -209,9 +209,10 @@ This GUI builds a new ANG file by combining:
 - a modified OH5/HDF5 file (source of scalar/derived values), and
 - a source ANG file (header template + baseline row layout).
 
-It performs sanity checks on pixel counts before export, enforces locked mappings for `phi1/PHI/phi2`, supports user-defined source->target mappings for other columns, and can optionally write one ASCII mapping note line in the ANG header.
+It performs sanity checks on pixel counts before export, enforces locked mappings for `phi1/PHI/phi2`, supports user-defined source->target mappings (or formula->target mappings) for other columns, and can optionally write one ASCII mapping note line in the ANG header.
 
 Each user mapping can also apply:
+- optional formula expressions using OH5 scalar fields and numeric constants (for example `Band_Width * 120 + CI`),
 - optional linear scaling from source min/max to a user-specified target range,
 - optional output type conversion (`float`, `int` with nearest rounding, or `auto` inference from target column tokens).
 

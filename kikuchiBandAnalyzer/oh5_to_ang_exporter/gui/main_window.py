@@ -66,6 +66,7 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         self._mapping_table: Optional[QtWidgets.QTableWidget] = None
         self._source_field_combo: Optional[QtWidgets.QComboBox] = None
         self._target_column_combo: Optional[QtWidgets.QComboBox] = None
+        self._formula_edit: Optional[QtWidgets.QLineEdit] = None
         self._scale_checkbox: Optional[QtWidgets.QCheckBox] = None
         self._scale_min_spin: Optional[QtWidgets.QDoubleSpinBox] = None
         self._scale_max_spin: Optional[QtWidgets.QDoubleSpinBox] = None
@@ -211,6 +212,15 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         mapping_controls.addStretch(1)
         mapping_layout.addLayout(mapping_controls)
 
+        formula_controls = QtWidgets.QHBoxLayout()
+        formula_controls.addWidget(QtWidgets.QLabel("Formula (optional)"))
+        self._formula_edit = QtWidgets.QLineEdit()
+        self._formula_edit.setPlaceholderText(
+            "Example: Band_Width * 120 + CI (leave blank for direct source mapping)"
+        )
+        formula_controls.addWidget(self._formula_edit, stretch=1)
+        mapping_layout.addLayout(formula_controls)
+
         transform_controls = QtWidgets.QHBoxLayout()
         self._scale_checkbox = QtWidgets.QCheckBox("Scale source min/max to target range")
         self._scale_checkbox.toggled.connect(self._on_scale_toggle)
@@ -238,10 +248,11 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         transform_controls.addStretch(1)
         mapping_layout.addLayout(transform_controls)
 
-        self._mapping_table = QtWidgets.QTableWidget(0, 6)
+        self._mapping_table = QtWidgets.QTableWidget(0, 7)
         self._mapping_table.setHorizontalHeaderLabels(
             [
                 "OH5 Source Field",
+                "Formula",
                 "ANG Target Column",
                 "Scale Enabled",
                 "Scale Min",
@@ -477,14 +488,22 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
             return
 
         source = self._source_field_combo.currentText().strip()
+        formula = self._formula_edit.text().strip()
         target = self._target_column_combo.currentText().strip()
         scale_enabled = bool(self._scale_checkbox.isChecked())
         scale_min = float(self._scale_min_spin.value()) if scale_enabled else None
         scale_max = float(self._scale_max_spin.value()) if scale_enabled else None
         output_type = str(self._output_type_combo.currentData() or "float")
 
-        if not source or not target:
-            QtWidgets.QMessageBox.warning(self, "Invalid mapping", "Select both source and target.")
+        if not target:
+            QtWidgets.QMessageBox.warning(self, "Invalid mapping", "Select a target column.")
+            return
+        if not formula and not source:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid mapping",
+                "Select a source field or provide a formula expression.",
+            )
             return
         if scale_enabled and np.isclose(scale_min, scale_max):
             QtWidgets.QMessageBox.warning(
@@ -501,7 +520,7 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
             )
             return
         for row in range(self._mapping_table.rowCount()):
-            existing_target_item = self._mapping_table.item(row, 1)
+            existing_target_item = self._mapping_table.item(row, 2)
             if existing_target_item is None:
                 continue
             if existing_target_item.text().strip() == target:
@@ -514,37 +533,44 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
 
         row = self._mapping_table.rowCount()
         self._mapping_table.insertRow(row)
-        self._mapping_table.setItem(row, 0, QtWidgets.QTableWidgetItem(source))
-        self._mapping_table.setItem(row, 1, QtWidgets.QTableWidgetItem(target))
         self._mapping_table.setItem(
             row,
-            2,
+            0,
+            QtWidgets.QTableWidgetItem("" if formula else source),
+        )
+        self._mapping_table.setItem(row, 1, QtWidgets.QTableWidgetItem(formula))
+        self._mapping_table.setItem(row, 2, QtWidgets.QTableWidgetItem(target))
+        self._mapping_table.setItem(
+            row,
+            3,
             QtWidgets.QTableWidgetItem("Yes" if scale_enabled else "No"),
         )
         self._mapping_table.setItem(
             row,
-            3,
+            4,
             QtWidgets.QTableWidgetItem(f"{scale_min:.6f}" if scale_enabled else ""),
         )
         self._mapping_table.setItem(
             row,
-            4,
+            5,
             QtWidgets.QTableWidgetItem(f"{scale_max:.6f}" if scale_enabled else ""),
         )
-        self._mapping_table.setItem(row, 5, QtWidgets.QTableWidgetItem(output_type))
+        self._mapping_table.setItem(row, 6, QtWidgets.QTableWidgetItem(output_type))
 
         transform_note = (
             f", scale=[{scale_min:.6g},{scale_max:.6g}]"
             if scale_enabled
             else ""
         )
+        mapping_source = f"formula({formula})" if formula else source
         self._logger.info(
             "Added mapping row: %s ---> %s%s, output_type=%s",
-            source,
+            mapping_source,
             target,
             transform_note,
             output_type,
         )
+        self._formula_edit.clear()
 
     def _remove_selected_mapping_rows(self) -> None:
         """Remove selected rows from the user mapping table."""
@@ -568,17 +594,23 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
         mappings: list[ColumnMapping] = []
         for row in range(self._mapping_table.rowCount()):
             source_item = self._mapping_table.item(row, 0)
-            target_item = self._mapping_table.item(row, 1)
-            scale_enabled_item = self._mapping_table.item(row, 2)
-            scale_min_item = self._mapping_table.item(row, 3)
-            scale_max_item = self._mapping_table.item(row, 4)
-            output_type_item = self._mapping_table.item(row, 5)
-            if source_item is None or target_item is None:
+            formula_item = self._mapping_table.item(row, 1)
+            target_item = self._mapping_table.item(row, 2)
+            scale_enabled_item = self._mapping_table.item(row, 3)
+            scale_min_item = self._mapping_table.item(row, 4)
+            scale_max_item = self._mapping_table.item(row, 5)
+            output_type_item = self._mapping_table.item(row, 6)
+            if target_item is None:
                 continue
-            source = source_item.text().strip()
+            source = source_item.text().strip() if source_item is not None else ""
+            formula = formula_item.text().strip() if formula_item is not None else ""
             target = target_item.text().strip()
-            if not source or not target:
+            if not target:
                 continue
+            if bool(source) == bool(formula):
+                raise ValueError(
+                    f"Mapping row {row + 1} must define exactly one of source or formula."
+                )
 
             scale_enabled = (
                 scale_enabled_item is not None
@@ -601,8 +633,9 @@ class Oh5ToAngExporterMainWindow(QtWidgets.QMainWindow):
             )
             mappings.append(
                 ColumnMapping(
-                    source_field=source,
+                    source_field=source if source else None,
                     target_column=target,
+                    formula_expression=formula if formula else None,
                     locked=False,
                     scale_enabled=scale_enabled,
                     scale_target_min=scale_min,

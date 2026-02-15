@@ -48,7 +48,9 @@ python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.gui \
    - ANG columns,
    - locked mapping table.
 4. Add user mappings in **Column Mapping**:
-   - select OH5 source field,
+   - choose either:
+     - OH5 source field, or
+     - Formula expression using OH5 fields and constants (for example `Band_Width * 120 + CI`),
    - select ANG target column,
    - optional: enable **Scale source min/max to target range** and set `Range Min/Range Max`,
    - optional: choose **Output Type**:
@@ -92,6 +94,15 @@ If TSL import does not tolerate this line, disable the option and re-export.
   - `source: Fit`
   - `target: SEM`
   - `output_type: int`
+- Formula mapping:
+  - `formula: Band_Width * 100 + CI`
+  - `target: IQ`
+  - `output_type: float`
+
+Formula syntax notes:
+- Supported operators: `+`, `-`, `*`, `/`, `**`, unary `+`/`-`, and parentheses.
+- Field references must use identifier-style names (`letters`, `numbers`, `_`). Matching is case-insensitive and treats spaces/hyphens in OH5 dataset names as underscores, so `band_width` and `Band_Width` resolve to the same OH5 field.
+- Use numeric constants only; unsupported syntax or unknown field names will produce a validation error naming the target column.
 
 ## Non-interactive CLI mode
 
@@ -104,8 +115,10 @@ python -m kikuchiBandAnalyzer.oh5_to_ang_exporter.cli --config configs/oh5_to_an
 Supported mapping keys in YAML:
 
 - Required:
-  - `source`
   - `target`
+  - exactly one of:
+    - `source`
+    - `formula`
 - Optional:
   - `scale_enabled` (boolean)
   - `scale_target_min` (float, required when `scale_enabled: true`)
