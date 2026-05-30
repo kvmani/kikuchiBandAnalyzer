@@ -16,7 +16,24 @@ import os
 import time
 from typing import List, Dict, Any
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:
+    class _MissingOpenCv:
+        """Raise a clear error when OpenCV-backed operations are used."""
+
+        COLOR_BGR2GRAY = None
+        INTER_NEAREST = None
+
+        def __getattr__(self, name):
+            """Raise an actionable OpenCV dependency error."""
+
+            raise ModuleNotFoundError(
+                "OpenCV is required for band detection. Install dependencies with "
+                "`pip install -r requirements.txt` or install `opencv-python`."
+            )
+
+    cv2 = _MissingOpenCv()
 from configLoader import load_config
 import numpy as np
 import pandas as pd
@@ -355,57 +372,6 @@ def prepare_json_input(path: str, n_patterns: int, tile_from_single: bool):
 # MAIN
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    from kikuchiBandAnalyzer.band_width.detector_cli import main
 
-    SOURCE_ROOT = r"tmp_sim_out/"
-    json_root = r"testData/"
-
-    config = load_config("bandDetectorOptionsHcp.yml")
-    config = load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE = r"testData/Med_Mn_10k_4x4_00995.png"
-    SOURCE = (r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_8.396\0 0 0\230x230.bmp")
-    SOURCE = (r"C:\Users\kvman\Document"
-              r"s\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\5pct_8.8158\0 0 0\230x230.bmp")
-    SOURCE = (r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\3pct_8.64788\0 0 0\230x230.bmp")
-    SOURCE = (r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\4pct_8.73184\0 0 0\230x230.bmp")
-    jsonFile = r"testData/Med_Mn_10k_4x4_00995.json"
-    jsonFile = r"C:\Users\kvman\Documents\ml_data\accuracy_testing_ML-EBSD-Patterns-Magnetite\0pct_0_0_0_230_230.json"
-
-    ##### now 460X460 cases
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"groundTruth\0_0_0_0pctStrain_460x460.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"noisyImages_2\0_0_0_0pctStrain_460x460_noisy.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"Images_ai_processed\cyclegan_kikuchi_model_weights\de_blur_noise_accuracy\test_latest\images\0_0_0_0pctStrain_460x460__level_1_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"ai_processed\0_0_0_0_pct.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-
-    ### for cropped
-    SOURCE_ROOT = r"tmp_sim_out/"
-    SOURCE_ROOT = r"testData/Images_ai_processed_cropped/cyclegan_kikuchi_model_weights/de_blur_noise_accuracy/test_latest/images/"
-    json_root = r"testData/"
-    SOURCE, jsonFile, config = SOURCE_ROOT+r"1840x1840_25_pct.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"1840x1840_25_pct_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"Images_ai_processed\cyclegan_kikuchi_model_weights\de_blur_noise_accuracy\test_latest\images\0_0_0_0pctStrain_460x460__level_1_noisy.png", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"0pct_8.396\0 0 0\460x460_noisy.bmp", json_root+r"0pct_0_0_0_460_460.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-    # SOURCE, jsonFile, config = SOURCE_ROOT+r"ai_processed\0_0_0_0_pct.bmp", json_root+r"0_pct_8.396.json",load_config("bandDetectorOptionsMagnetiteAccuracyTesting.yml")
-
-    phase = ut.make_phase(config["phase_list"])
-
-    ebsd_data  = load_ebsd_data(SOURCE, tile_rows=1, tile_cols=1)
-    n_patterns = np.prod(ebsd_data.shape[:2])
-
-    json_input = prepare_json_input(jsonFile,
-                                    n_patterns,
-                                    tile_from_single=True)
-
-    processor = KikuchiBatchProcessor(
-        ebsd_data,
-        json_input,
-        config=config,
-        desired_hkl=config.get("desired_hkl", "110"), phase=phase
-    )
-    results = processor.process()
-
-    ut.save_results_to_csv(
-        results,
-        raw_path="bandOutputData.csv",
-        filtered_path="filtered_band_data.csv",
-    )
+    main()

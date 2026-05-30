@@ -42,7 +42,7 @@ from kikuchiBandAnalyzer.ebsd_compare.gui.validation import (
     validate_speed_ms,
 )
 from kikuchiBandAnalyzer.ebsd_compare.model import ScanDataset
-from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.ebsd_compare.readers.factory import open_scan_dataset
 from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import (
     AlignmentResult,
     alignment_from_config,
@@ -113,6 +113,7 @@ class MapCanvas(FigureCanvas):
         self._secondary_marker_color = "#ff0000"
         self._overlay_line_coords: Optional[Tuple[float, float, float, float]] = None
         self._overlay_line_artist = None
+        self._overlay_line_artists = []
         self._overlay_line_color = "#00b060"
         self._overlay_line_width = 2.0
         self._overlay_line_visible = True
@@ -200,6 +201,7 @@ class MapCanvas(FigureCanvas):
             self._marker_artist = None
             self._secondary_marker_artist = None
             self._overlay_line_artist = None
+            self._clear_overlay_line_artists()
             if self._marker_coords is not None:
                 self._draw_marker()
             if self._secondary_marker_coords is not None:
@@ -319,7 +321,135 @@ class MapCanvas(FigureCanvas):
         if self._overlay_line_artist is not None:
             self._overlay_line_artist.remove()
             self._overlay_line_artist = None
-            self.draw_idle()
+        self._clear_overlay_line_artists()
+        self.draw_idle()
+
+    def set_overlay_lines(
+        self,
+        lines: list[dict[str, object]],
+        *,
+        color: str = "#00b060",
+        linewidth: float = 1.8,
+        show_labels: bool = True,
+    ) -> None:
+        """Set multiple overlay lines on the canvas.
+
+        Parameters:
+            lines: Line dictionaries with ``central_line`` and optional ``hkl``.
+            color: Line color.
+            linewidth: Line width.
+            show_labels: Whether to draw HKL labels near line midpoints.
+
+        Returns:
+            None.
+        """
+
+        self._overlay_line_coords = None
+        if self._overlay_line_artist is not None:
+            self._overlay_line_artist.remove()
+            self._overlay_line_artist = None
+        self._clear_overlay_line_artists()
+        if self._image is None:
+            return
+        image_array = self._image.get_array()
+        height, width = image_array.shape[:2]
+        for line_index, line_data in enumerate(lines):
+            coords = np.asarray(line_data.get("central_line"), dtype=float).ravel()
+            if coords.size < 4 or not np.isfinite(coords[:4]).all():
+                continue
+            clipped = self._clip_segment_to_image(coords[:4], width=width, height=height)
+            if clipped is None:
+                continue
+            x1, y1, x2, y2 = clipped
+            line_color = str(line_data.get("color", color))
+            (line_artist,) = self._axes.plot(
+                [x1, x2],
+                [y1, y2],
+                color=line_color,
+                linewidth=linewidth,
+                alpha=0.9,
+                zorder=5,
+                clip_on=True,
+            )
+            self._overlay_line_artists.append(line_artist)
+            draw_label = bool(line_data.get("show_label", True))
+            if show_labels and draw_label:
+                label = str(line_data.get("hkl", "")).strip()
+                if label:
+                    fraction = float(line_data.get("label_fraction", 0.15 if line_index % 2 == 0 else 0.85))
+                    fraction = min(0.95, max(0.05, fraction))
+                    label_x = x1 + fraction * (x2 - x1)
+                    label_y = y1 + fraction * (y2 - y1)
+                    angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                    text_artist = self._axes.text(
+                        label_x,
+                        label_y,
+                        label,
+                        color=line_color,
+                        fontsize=8,
+                        fontweight="bold",
+                        ha="center",
+                        va="center",
+                        rotation=angle,
+                        rotation_mode="anchor",
+                        bbox={"facecolor": "black", "alpha": 0.45, "edgecolor": "none", "pad": 1.0},
+                        zorder=6,
+                        clip_on=True,
+                    )
+                    self._overlay_line_artists.append(text_artist)
+        self._axes.set_xlim(-0.5, width - 0.5)
+        self._axes.set_ylim(height - 0.5, -0.5)
+        self.draw_idle()
+
+    def _clear_overlay_line_artists(self) -> None:
+        """Remove all multi-line overlay artists."""
+
+        for artist in self._overlay_line_artists:
+            try:
+                artist.remove()
+            except ValueError:
+                pass
+        self._overlay_line_artists = []
+
+    def _clip_segment_to_image(
+        self,
+        coords: np.ndarray,
+        *,
+        width: int,
+        height: int,
+    ) -> Optional[Tuple[float, float, float, float]]:
+        """Clip a line segment to the displayed image bounds.
+
+        Parameters:
+            coords: Four values ``x1, y1, x2, y2``.
+            width: Image width in pixels.
+            height: Image height in pixels.
+
+        Returns:
+            Clipped segment coordinates, or ``None`` if the segment is outside.
+        """
+
+        x1, y1, x2, y2 = [float(value) for value in coords]
+        dx = x2 - x1
+        dy = y2 - y1
+        x_min, x_max = 0.0, float(width - 1)
+        y_min, y_max = 0.0, float(height - 1)
+        p_values = [-dx, dx, -dy, dy]
+        q_values = [x1 - x_min, x_max - x1, y1 - y_min, y_max - y1]
+        u1, u2 = 0.0, 1.0
+        for p_value, q_value in zip(p_values, q_values):
+            if p_value == 0:
+                if q_value < 0:
+                    return None
+                continue
+            ratio = q_value / p_value
+            if p_value < 0:
+                u1 = max(u1, ratio)
+            else:
+                u2 = min(u2, ratio)
+            if u1 > u2:
+                return None
+        return x1 + u1 * dx, y1 + u1 * dy, x1 + u2 * dx, y1 + u2 * dy
 
     def set_overlay_visible(self, visible: bool) -> None:
         """Show or hide the overlay line.
@@ -1167,8 +1297,20 @@ class EbsdCompareMainWindow(QtWidgets.QMainWindow):
 
         self._logger.info("Loading scans: %s and %s", path_a, path_b)
         field_aliases = self._config.get("field_aliases", {})
-        dataset_a = OH5ScanFileReader.from_path(path_a, field_aliases=field_aliases)
-        dataset_b = OH5ScanFileReader.from_path(path_b, field_aliases=field_aliases)
+        dataset_a = open_scan_dataset(
+            path_a,
+            config=self._config,
+            role="scan_a",
+            field_aliases=field_aliases,
+            logger=self._logger,
+        )
+        dataset_b = open_scan_dataset(
+            path_b,
+            config=self._config,
+            role="scan_b",
+            field_aliases=field_aliases,
+            logger=self._logger,
+        )
         self._file_a_edit.setText(str(path_a))
         self._file_b_edit.setText(str(path_b))
         self._scan_a_name_edit.setText(path_a.stem or self._default_scan_a_name)

@@ -1,6 +1,7 @@
 # Configuration options for Kikuchi pattern and EBSD data processing
 
-h5_file_path: "testData/Test_Ti.oh5"  # Path to the .h5 EBSD dataset file
+#h5_file_path: "testData/Test_Ti.oh5"  # Path to the .h5 EBSD dataset file
+h5_file_path: "C:\\Users\\kvman\\PycharmProjects\\kikuchiBandAnalyzer\\testData\\Test_Ti.oh5"  # Path to the .h5 EBSD dataset file
 crop_start: 1     # Starting index for cropping, used only in debug mode for faster processing can be ignored by normal users
 crop_end: 8 # Ending index for cropping, used only in debug mode for faster processing
 debug: false      # Set to true for enabling debug mode; this crops the dataset for faster runs

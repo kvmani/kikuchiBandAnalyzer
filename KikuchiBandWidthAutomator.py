@@ -9,6 +9,7 @@ mode, reading all options from a YAML configuration file, or in a debug mode
 where the data set is cropped and detailed logging is enabled.
 """
 
+import argparse
 import time
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from orix import plot
 from diffsims.crystallography import ReciprocalLatticeVector
 from diffpy.structure import Atom, Lattice, Structure
 from orix.crystal_map import Phase, PhaseList
+from orix.quaternion import Rotation
 from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
@@ -28,9 +30,14 @@ import numpy as np
 import pandas as pd
 import json
 from kikuchiBandWidthDetector import KikuchiBatchProcessor
+from kikuchiBandWidthDetector import prepare_json_input
 import shutil
 import h5py
 import utilities as ut
+from kikuchiBandAnalyzer.band_width.ctf_acquisition import (
+    CtfBandWidthAcquisition,
+    export_ctf_with_prias_metrics,
+)
 from kikuchiBandAnalyzer.derived_fields import build_default_registry, write_hdf5_dataset
 from simulators import (
     make_text_marker,
@@ -57,29 +64,55 @@ class BandWidthAutomator:
         """Instantiate the automator and load the configuration."""
 
         self.config = load_config(config_path)
-        self.data_path = Path(self.config.get("h5_file_path", "path_to_default_file.h5"))
-        self.output_dir = self.data_path.parent
+        self.source_format = "ctf" if self.config.get("ctf_file_path") else "h5"
+        self.data_path = Path(
+            self.config.get(
+                "ctf_file_path",
+                self.config.get("h5_file_path", "path_to_default_file.h5"),
+            )
+        )
+        configured_output_dir = self.config.get("output_dir")
+        self.output_dir = Path(configured_output_dir) if configured_output_dir else self.data_path.parent
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.base_name = self.data_path.stem
         self.modified_data_path = self.output_dir / f"{self.base_name}_modified.h5"
         self.in_ang_path = self.output_dir / f"{self.base_name}.ang"
         self.dataset = None
         self.grouped_dict_list = None
-        logging.info('Justc ompleted the object initiation')
+        self.ctf_acquisition_result = None
+        logging.info('Justcompleted the object initiation')
 
     # ------------------------------------------------------------------
     def prepare_dataset(self):
         """Load the EBSD data set and optionally crop for debug mode."""
 
+        if self.source_format == "ctf":
+            acquisition = CtfBandWidthAcquisition(
+                self.config,
+                output_dir=self.output_dir,
+                logger=logging.getLogger(__name__),
+            )
+            result = acquisition.prepare()
+            self.dataset = result.dataset
+            self.modified_data_path = result.modified_h5_path
+            self.base_name = self.data_path.stem
+            self.ctf_acquisition_result = result
+            logging.info("Prepared CTF pattern-folder dataset from %s.", self.data_path)
+            return
+
         path = self.data_path
         if path.suffix == ".oh5":
-            new_data_path = path.with_suffix(".h5")
+            new_data_path = self.output_dir / f"{path.stem}.h5"
             shutil.copy(path, new_data_path)
             logging.info(f"Copied .oh5 file to new .h5 file: {new_data_path}")
             path = new_data_path
             self.data_path = new_data_path
 
-        shutil.copy(path, self.modified_data_path)
-        logging.info(f"Copied HDF5 file to: {self.modified_data_path}")
+        if Path(path).resolve() != self.modified_data_path.resolve():
+            shutil.copy(path, self.modified_data_path)
+            logging.info(f"Copied HDF5 file to: {self.modified_data_path}")
+        else:
+            logging.info("Using existing HDF5 working file: %s", self.modified_data_path)
 
         logging.info(f"Loading dataset from: {path}")
         self.dataset = kp.load(path, lazy=False)
@@ -94,6 +127,25 @@ class BandWidthAutomator:
     # ------------------------------------------------------------------
     def simulate_and_index(self):
         """Simulate Kikuchi patterns and determine band locations."""
+        annotation_path = self.config.get("band_annotation_json_path") or self.config.get(
+            "line_annotation_json_path"
+        )
+        if annotation_path:
+            n_patterns = int(np.prod(self.dataset.data.shape[:2]))
+            self.grouped_dict_list = prepare_json_input(
+                str(annotation_path),
+                n_patterns=n_patterns,
+                tile_from_single=bool(self.config.get("tile_annotations_from_single", False)),
+            )
+            logging.info(
+                "Loaded %d precomputed band-line annotation entries from %s.",
+                len(self.grouped_dict_list),
+                annotation_path,
+            )
+            return
+        if self.source_format == "ctf":
+            self.grouped_dict_list = self._simulate_ctf_band_lines()
+            return
         phase_cfg = self.config["phase_list"]
         phase_list = PhaseList(
             Phase(
@@ -109,13 +161,21 @@ class BandWidthAutomator:
         header_data = ut.extract_header_data(str(self.modified_data_path))
 
         sig_shape = self.dataset.axes_manager.signal_shape[::-1]
+        detector_cfg = dict(self.config.get("detector", {}) or {})
+        convention = str(detector_cfg.get("convention", self.config.get("detector_convention", "edax")))
+        pc = detector_cfg.get("pc", self.config.get("pc", header_data.get("pc", (0.0, 0.0, 0.0))))
         det = kp.detectors.EBSDDetector(
             sig_shape,
-            sample_tilt=float(header_data.get("Sample Tilt", 0.0)),
-            tilt=float(header_data.get("Camera Elevation Angle", 0.0)),
-            azimuthal=float(header_data.get("Camera Azimuthal Angle", 0.0)),
-            convention="edax",
-            pc=tuple(header_data.get("pc", (0.0, 0.0, 0.0))),
+            sample_tilt=float(detector_cfg.get("sample_tilt", header_data.get("Sample Tilt", 0.0))),
+            tilt=float(detector_cfg.get("tilt", header_data.get("Camera Elevation Angle", 0.0))),
+            azimuthal=float(detector_cfg.get("azimuthal", header_data.get("Camera Azimuthal Angle", 0.0))),
+            convention=convention,
+            pc=tuple(pc),
+        )
+        logging.info(
+            "Built EBSD detector for HDF5/TSL route with convention=%s, pc=%s.",
+            convention,
+            tuple(pc),
         )
 
         indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
@@ -133,7 +193,7 @@ class BandWidthAutomator:
         sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
         sim.phase = phase
 
-        desired_hkl = self.config.get("desired_hkl", "1,1,1")
+        desired_hkl = str(self.config.get("desired_hkl", "1,1,1"))
         markers, grouped_dict_list = sim.as_markers(
             kikuchi_line_labels=True, desired_hkl=desired_hkl
         )
@@ -148,6 +208,153 @@ class BandWidthAutomator:
             self.dataset.plot(maps_nav_rgb)
             plt.show()
 
+    def _build_phase_list(self) -> PhaseList:
+        """Build a PhaseList from configuration.
+
+        Returns:
+            PhaseList containing the configured crystal phase.
+        """
+
+        phase_cfg = self.config["phase_list"]
+        atoms_cfg = phase_cfg.get("atoms")
+        if atoms_cfg:
+            atoms = [Atom(at["element"], at["position"]) for at in atoms_cfg]
+        else:
+            logging.warning(
+                "phase_list.atoms is missing; using one %s atom at [0, 0, 0]. "
+                "For production work, add explicit atoms to the YAML phase_list.",
+                phase_cfg["name"],
+            )
+            atoms = [Atom(phase_cfg["name"], [0, 0, 0])]
+        return PhaseList(
+            Phase(
+                name=phase_cfg["name"],
+                space_group=phase_cfg["space_group"],
+                structure=Structure(
+                    lattice=Lattice(*phase_cfg["lattice"]),
+                    atoms=atoms,
+                ),
+            ),
+        )
+
+    def _simulate_ctf_band_lines(self):
+        """Simulate Kikuchi line annotations from CTF Euler angles.
+
+        Returns:
+            Grouped line-annotation dictionaries consumable by KikuchiBatchProcessor.
+        """
+
+        if self.ctf_acquisition_result is None:
+            raise RuntimeError(
+                "CTF acquisition has not been prepared. Call prepare_dataset() before "
+                "simulate_and_index(), or use BandWidthAutomator.run()."
+            )
+        phase_list = self._build_phase_list()
+        phase = phase_list[0]
+        hkl_list = self.config["hkl_list"]
+        euler = self.ctf_acquisition_result.euler_angles_deg
+        if euler.shape[0] != int(np.prod(self.dataset.data.shape[:2])):
+            raise ValueError(
+                "CTF Euler count does not match loaded pattern count. "
+                f"Euler rows={euler.shape[0]}, pattern grid={self.dataset.data.shape[:2]}. "
+                "Check XCells/YCells and the pattern folder mapping."
+            )
+        detector = self._build_ctf_detector()
+        direction = self.config.get("ctf_euler_direction", "lab2crystal")
+        rotations = Rotation.from_euler(euler, direction=direction, degrees=True)
+        rotations = rotations.reshape(*self.dataset.data.shape[:2])
+        ref = ReciprocalLatticeVector(phase=phase, hkl=hkl_list).symmetrise()
+        simulator = CustomKikuchiPatternSimulator(ref)
+        sim = simulator.on_detector(detector, rotations)
+        sim.phase = phase
+        desired_hkl = str(self.config.get("desired_hkl", "1,1,1"))
+        _, grouped_dict_list = sim.as_markers(
+            kikuchi_line_labels=True,
+            desired_hkl=desired_hkl,
+        )
+        expected = int(np.prod(self.dataset.data.shape[:2]))
+        if len(grouped_dict_list) != expected:
+            logging.warning(
+                "CTF line simulation produced %d grouped pixel entries; expected %d. "
+                "Pixels without visible target lines will still be processed with empty annotations. "
+                "If many entries are missing, check detector geometry, PC, sample_tilt, Euler convention, and desired_hkl.",
+                len(grouped_dict_list),
+                expected,
+            )
+            grouped_dict_list = self._pad_grouped_annotations(grouped_dict_list)
+        logging.info("Generated CTF Kikuchi-line annotations for %d pixels.", len(grouped_dict_list))
+        return grouped_dict_list
+
+    def _build_ctf_detector(self):
+        """Build an Oxford-convention EBSD detector for CTF simulations.
+
+        Returns:
+            kikuchipy EBSDDetector configured for the CTF pattern geometry.
+        """
+
+        if self.ctf_acquisition_result is None:
+            raise RuntimeError("CTF acquisition result is unavailable.")
+        detector_cfg = dict(self.config.get("ctf_detector", {}) or {})
+        shape = tuple(int(value) for value in self.ctf_acquisition_result.pattern_shape)
+        pc = detector_cfg.get("pc", self.config.get("pc", [0.5, 0.5, 0.5]))
+        if len(pc) != 3:
+            raise ValueError(
+                "ctf_detector.pc must contain three values [x*, y*, z*]. "
+                "Example: ctf_detector: {pc: [0.5, 0.5, 0.5]}."
+            )
+        pc = tuple(float(value) for value in pc)
+        if any(value <= 0 or value >= 1 for value in pc[:2]) or pc[2] <= 0:
+            logging.warning(
+                "CTF detector pattern center %s is unusual. Verify the PC convention "
+                "and use ctf_detector.convention='oxford' with an Oxford-format PC when possible.",
+                pc,
+            )
+        for key, default in (
+            ("sample_tilt", 70.0),
+            ("tilt", 0.0),
+            ("azimuthal", 0.0),
+        ):
+            if key not in detector_cfg:
+                logging.warning(
+                    "ctf_detector.%s is not configured; using default %s. "
+                    "For production CTF analysis, set detector geometry explicitly.",
+                    key,
+                    default,
+                )
+        return kp.detectors.EBSDDetector(
+            shape=shape,
+            px_size=float(detector_cfg.get("px_size", 1.0)),
+            binning=int(detector_cfg.get("binning", 1)),
+            sample_tilt=float(detector_cfg.get("sample_tilt", 70.0)),
+            tilt=float(detector_cfg.get("tilt", 0.0)),
+            azimuthal=float(detector_cfg.get("azimuthal", 0.0)),
+            pc=pc,
+            convention=str(detector_cfg.get("convention", "oxford")),
+        )
+
+    def _pad_grouped_annotations(self, grouped_dict_list):
+        """Pad sparse grouped annotations to one entry per scan pixel.
+
+        Parameters:
+            grouped_dict_list: Existing grouped annotation entries.
+
+        Returns:
+            Dense grouped annotation list sorted by row-major pixel index.
+        """
+
+        n_rows, n_cols = self.dataset.data.shape[:2]
+        by_index = {
+            int(entry.get("ind", -1)): entry
+            for entry in grouped_dict_list
+            if isinstance(entry, dict)
+        }
+        dense = []
+        for row in range(n_rows):
+            for col in range(n_cols):
+                idx = row * n_cols + col
+                dense.append(by_index.get(idx, {"x,y": [row, col], "ind": idx, "points": []}))
+        return dense
+
     # ------------------------------------------------------------------
     def detect_band_widths(self, progress_callback=None, cancel_callback=None):
         """Run the :class:`KikuchiBatchProcessor` over all patterns.
@@ -160,7 +367,7 @@ class BandWidthAutomator:
         Returns:
             List of processed pixel entries.
         """
-        desired_hkl = self.config.get("desired_hkl", "1,1,1")
+        desired_hkl = str(self.config.get("desired_hkl", "1,1,1"))
         ebsd_data = self.dataset.data
         processor = KikuchiBatchProcessor(
             ebsd_data,
@@ -582,18 +789,43 @@ class BandWidthAutomator:
                 "Wrote Band_Width, strain, stress, psnr, efficient/defficient intensity to HDF5."
             )
 
+        if self.source_format == "ctf":
+            ang_output_path = export_ctf_with_prias_metrics(self.modified_data_path)
+            oh5_output_path = self._export_oh5_copy()
+            logging.info(
+                "Exported CTF-derived ANG and OH5 outputs: %s, %s.",
+                ang_output_path,
+                oh5_output_path,
+            )
+            return
+
         try:
             ang_output_path = ut.export_ang_with_prias_metrics(
                 original_ang_path=self.in_ang_path,
                 modified_h5_path=self.modified_data_path,
             )
             logging.info("Exported companion ANG file for TSL at: %s", ang_output_path)
+            oh5_output_path = self._export_oh5_copy()
+            logging.info("Exported OH5 copy at: %s", oh5_output_path)
         except Exception:
             logging.exception(
-                "Failed to export companion ANG file with PRIAS metrics from %s.",
+                "Failed to export companion ANG/OH5 files from %s.",
                 self.modified_data_path,
             )
             raise
+
+    def _export_oh5_copy(self) -> Path:
+        """Write an OH5-named copy of the modified HDF5 output.
+
+        Returns:
+            Path to the OH5 copy.
+        """
+
+        output_path = self.modified_data_path.with_suffix(".oh5")
+        if output_path.resolve() == self.modified_data_path.resolve():
+            return output_path
+        shutil.copy2(self.modified_data_path, output_path)
+        return output_path
 
     # ------------------------------------------------------------------
     def run(self):
@@ -612,9 +844,28 @@ class BandWidthAutomator:
 #                               main()
 # ---------------------------------------------------------------------- #
 def main():
-    """Convenience wrapper for command line execution."""
+    """Run the band-width automator from command-line arguments."""
 
-    bwa = BandWidthAutomator()
+    parser = argparse.ArgumentParser(
+        description="Run Kikuchi band-width analysis from a YAML configuration."
+    )
+    parser.add_argument(
+        "--config",
+        default="bandDetectorOptionsHcp.yml",
+        help="Path to the YAML configuration file.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Force DEBUG logging for this run.",
+    )
+    args = parser.parse_args()
+    from kikuchiBandAnalyzer.band_width.config import load_band_width_config
+
+    config = load_band_width_config(args.config)
+    if args.debug or bool(config.get("debug", False)):
+        logging.getLogger().setLevel(logging.DEBUG)
+    bwa = BandWidthAutomator(config_path=args.config)
     bwa.run()
 if __name__ == "__main__":
     main()

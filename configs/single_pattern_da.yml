@@ -1,0 +1,41 @@
+input:
+  type: oh5
+  path: testData/DA.oh5
+  pattern_field: Pattern
+  x: 3
+  y: 3
+
+phase:
+  name: Ni
+  space_group: 225
+  lattice: [3.5236, 3.5236, 3.5236, 90, 90, 90]
+  atoms:
+    - element: Ni
+      position: [0, 0, 0]
+
+detector:
+  convention: edax
+  pc: [0.547204, 0.710997, 0.696374]
+  sample_tilt: 70.0
+  tilt: 0.0
+  azimuthal: 0.0
+  px_size: 1.0
+  binning: 1
+
+orientation:
+  direction: lab2crystal
+
+simulation:
+  hkl_list: [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]
+
+band_profile:
+  desired_hkl: "1,1,1"
+  rectWidth: 20
+  smoothing_sigma: 2.0
+  min_psnr: 1.01
+
+hough:
+  enabled: false
+  n_bands: 10
+  t_sigma: 2
+  r_sigma: 2

@@ -49,14 +49,14 @@ def parse_indices(obj: Union[str, Tuple[int, ...], list]) -> Tuple[int, ...]:
 
 
 def make_phase(cfg: dict) -> Phase:
-    """
-    Construct an orix Phase object from a configuration dictionary.
+    """Construct an orix Phase object from a configuration dictionary.
 
-    Expected format:
-        cfg = {
+    Expected format::
+
+        {
             "name": "Ni",
             "space_group": 225,
-            "lattice": [a, b, c, alpha, beta, gamma]  # in Å and degrees
+            "lattice": [a, b, c, alpha, beta, gamma]
         }
 
     The function assumes a single atom at the origin (0, 0, 0).
@@ -197,13 +197,11 @@ def sanity_check_reordering(patterns, reordered_patterns, nRows, nCols, debug=Fa
         plt.show()
 
 def extract_header_data(h5_file_path):
-    """
-    Extract specific header data from a given HDF5 file.
+    """Extract selected EBSD header values from an HDF5 file.
+
     Fields:
-        - Camera Azimuthal Angle
-        - Camera Elevation Angle
-        - Sample Tilt
-        - Working Distance
+        Camera Azimuthal Angle, Camera Elevation Angle, Sample Tilt, and
+        Working Distance.
 
     Args:
         h5_file_path (str): Path to the HDF5 file.

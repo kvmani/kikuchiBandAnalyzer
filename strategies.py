@@ -1,6 +1,22 @@
+"""Band detection strategies for Kikuchi band-width measurement."""
+
 import logging
 
-import cv2
+try:
+    import cv2
+except ModuleNotFoundError:
+    class _MissingOpenCv:
+        """Raise a clear error when OpenCV-backed strategy operations are used."""
+
+        def __getattr__(self, name):
+            """Raise an actionable OpenCV dependency error."""
+
+            raise ModuleNotFoundError(
+                "OpenCV is required for band detection strategies. Install dependencies "
+                "with `pip install -r requirements.txt` or install `opencv-python`."
+            )
+
+    cv2 = _MissingOpenCv()
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -37,6 +53,8 @@ def strtobool(value):
     raise ValueError(f"Invalid truth value: {value!r}")
 
 class LineTrimmer:
+    """Trim detected line segments to the valid image region."""
+
     def __init__(self, image_width, image_height):
         """
         Initializes the LineTrimmer with image bounds.
@@ -104,7 +122,18 @@ class LineTrimmer:
         return new_x1, new_y1, new_x2, new_y2
 
 class BandDetectionStrategy:
+    """Base class for band detection strategies."""
+
     def __init__(self, image, central_line, config,hkl):
+        """Initialize a band detection strategy.
+
+        Parameters:
+            image: Input grayscale pattern image.
+            central_line: Central line coordinates for the candidate band.
+            config: Detection configuration dictionary.
+            hkl: Miller index label for the candidate band.
+        """
+
         self.image = image
         self.central_line = central_line
         self.hkl = hkl
@@ -117,6 +146,8 @@ class BandDetectionStrategy:
         raise NotImplementedError("Subclasses must implement this method.")
 
 class RectangularAreaBandDetector:
+    """Detect Kikuchi band width by sampling a rotated rectangular region."""
+
     def __init__(self, image, central_line, config,hkl):
         """
         Initializes the band detector for rectangular area-based strategy.
@@ -470,12 +501,18 @@ class RectangularAreaBandDetector:
         return resized_image
 
     def detect_edges(self, profile):
-        """
-        Detect edges on the intensity profile using minima detection and calculate PSNR.
-        :param profile: 1D intensity profile.
-        :return: Dictionary containing band start/end indices, central peak index, PSNR, intensity metrics,
-            and convenience aliases ``band_start_idx``/``band_end_idx``/``central_peak_idx`` for downstream
-            consumers. When a band is invalid, the ``*_idx`` entries are set to -1.
+        """Detect band edges on an intensity profile and calculate PSNR.
+
+        Parameters:
+            profile: One-dimensional intensity profile sampled across a
+                candidate Kikuchi band.
+
+        Returns:
+            Dictionary containing band start/end indices, central peak index,
+            PSNR, intensity metrics, and convenience aliases
+            ``band_start_idx``/``band_end_idx``/``central_peak_idx`` for
+            downstream consumers. When a band is invalid, the ``*_idx`` entries
+            are set to ``-1``.
         """
         band_valid = False
         smoothed_profile = gaussian_filter1d(profile, sigma=self.config.get("smoothing_sigma", 2))
@@ -549,18 +586,38 @@ class RectangularAreaBandDetector:
         :param band_end: Index of the detected band end.
         :param central_peak: Index of the central peak in the intensity profile.
         """
-        fig, ax = plt.subplots(2, 2, figsize=(10, 10))
+        fig, ax = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+        fig.suptitle(
+            f"Kikuchi Band Width Diagnostic | hkl={self.hkl} | "
+            f"band width={self.band_width:.3f} px | PSNR={self.psnr:.3f} | valid={self.band_valid}",
+            fontsize=14,
+            fontweight="bold",
+        )
 
         # Plot 1: Original image with band start/end points and lines parallel to central line
         ax[0, 0].imshow(self.image, cmap='gray')
         ax[0, 0].plot([self.central_line[0], self.central_line[2]],
-                      [self.central_line[1], self.central_line[3]], 'r-', label='Central Line')
+                      [self.central_line[1], self.central_line[3]], color="#d62728", linewidth=2.0, label='Central Line')
+        ax[0, 0].scatter(
+            [self.central_line[0], self.central_line[2]],
+            [self.central_line[1], self.central_line[3]],
+            s=35,
+            color="#d62728",
+            edgecolor="white",
+            linewidth=0.6,
+            zorder=5,
+        )
+        dx = self.central_line[2] - self.central_line[0]
+        dy = self.central_line[3] - self.central_line[1]
+        line_length = np.sqrt(dx ** 2 + dy ** 2)
+        if line_length <= 0:
+            raise ValueError(
+                "Cannot plot band debug diagnostics because the central line has zero length. "
+                "Check the simulated/loaded central_line coordinates for this pattern."
+            )
 
         if band_start is not None and band_end is not None:
             # Calculate the vector along the central line
-            dx = self.central_line[2] - self.central_line[0]
-            dy = self.central_line[3] - self.central_line[1]
-            line_length = np.sqrt(dx ** 2 + dy ** 2)
             unit_vector_x = dx / line_length
             unit_vector_y = dy / line_length
 
@@ -596,9 +653,9 @@ class RectangularAreaBandDetector:
             end_line_y2 = end_y + (dy / 2)
 
             # Plot the band start and end lines (parallel to the central line)
-            ax[0, 0].plot([start_line_x1, start_line_x2], [start_line_y1, start_line_y2], 'g--',
+            ax[0, 0].plot([start_line_x1, start_line_x2], [start_line_y1, start_line_y2], color="#2ca02c", linestyle="--", linewidth=1.8,
                           label='Band Start Line')
-            ax[0, 0].plot([end_line_x1, end_line_x2], [end_line_y1, end_line_y2], 'g--', label='Band End Line')
+            ax[0, 0].plot([end_line_x1, end_line_x2], [end_line_y1, end_line_y2], color="#ff7f0e", linestyle="--", linewidth=1.8, label='Band End Line')
 
         # Step 2: Plot the rectangle with reverse rotation to align with the band in original image coordinates
         angle = np.arctan2(dy, dx) * 180 / np.pi - 90
@@ -610,24 +667,29 @@ class RectangularAreaBandDetector:
         # # Plot the original rectangle
         # rect = plt.Polygon(rotated_rect_corners, fill=None, edgecolor='b')
         # ax[0, 0].add_patch(rect)
-        ax[0, 0].set_title("Original Image with Band Start/End and Rectangle")
+        ax[0, 0].set_title("Pattern-space band geometry")
+        ax[0, 0].set_xlabel("Detector x (px)")
+        ax[0, 0].set_ylabel("Detector y (px)")
+        ax[0, 0].legend(loc="upper right", fontsize=8, frameon=True)
 
         # Plot 3: Upright rectangle region after rotation with bandwidth in title
         ax[0, 1].imshow(rotated_image, cmap='gray')
-        rect_patch = plt.Polygon(rect_corners, fill=None, edgecolor='b')
+        rect_patch = plt.Polygon(rect_corners, fill=None, edgecolor="#1f77b4", linewidth=1.8)
         ax[0, 1].add_patch(rect_patch)
         # Add band width to title
         if self.band_width is not None:
-            ax[0, 1].set_title(f"Rotated Image with Rectangle (bandwidth={self.band_width:.2f})")
+            ax[0, 1].set_title(f"Rotated extraction frame (bandwidth={self.band_width:.2f} px)")
         else:
-            ax[0, 1].set_title("Rotated Image with Rectangle")
+            ax[0, 1].set_title("Rotated extraction frame")
+        ax[0, 1].set_xlabel("Rotated x (px)")
+        ax[0, 1].set_ylabel("Rotated y (px)")
 
         # Plot 4: Summed intensity profile with detected edges
         # ax[1, 0].imshow(rect_area, cmap='gray')
         # ax[1, 0].set_title("Upright Rectangular Region")
         # Plot 4: Upright rectangle region after rotation with detected band edges
         ax[1, 0].imshow(rect_area, cmap='gray')
-        ax[1, 0].set_title("Upright Rectangular Region")
+        ax[1, 0].set_title("Extracted band sampling region")
 
         # Convert band start/end profile indices into image space considering the scaling factor
         if band_start is not None and band_end is not None:
@@ -636,8 +698,11 @@ class RectangularAreaBandDetector:
             end_x = int(band_end / self.scaling_factor)
 
             # Draw vertical lines at the detected band start and band end positions in the rectangle
-            ax[1, 0].axvline(x=start_x, color='g', linestyle='--', label='Band Start')
-            ax[1, 0].axvline(x=end_x, color='r', linestyle='--', label='Band End')
+            ax[1, 0].axvline(x=start_x, color="#2ca02c", linestyle='--', linewidth=1.8, label='Band Start')
+            ax[1, 0].axvline(x=end_x, color="#ff7f0e", linestyle='--', linewidth=1.8, label='Band End')
+        ax[1, 0].set_xlabel("Sampled x (px)")
+        ax[1, 0].set_ylabel("Sampled y (px)")
+        ax[1, 0].legend(loc="upper right", fontsize=8, frameon=True)
 
         # Adding a legend for band start and end
         ##ax[1, 0].legend()
@@ -662,16 +727,14 @@ class RectangularAreaBandDetector:
         #ax[1, 1].plot(summed_profile, label='Summed Intensity')
 
         if band_start is not None and band_end is not None:
-            ax[1, 1].axvline(x=band_start, color='g', linestyle='--', label='Band Start')
-            ax[1, 1].axvline(x=band_end, color='r', linestyle='--', label='Band End')
+            ax[1, 1].axvline(x=band_start, color="#2ca02c", linestyle='--', linewidth=1.8, label='Band Start')
+            ax[1, 1].axvline(x=band_end, color="#ff7f0e", linestyle='--', linewidth=1.8, label='Band End')
 
         if central_peak is not None:
-            ax[1, 1].axvline(x=central_peak, color='b', linestyle=':', label='Central Peak')
+            ax[1, 1].axvline(x=central_peak, color="#1f77b4", linestyle=':', linewidth=2.0, label='Central Peak')
 
         # Set the title with hkl, bandwidth, PSNR, and validity information
-        ax[1, 1].set_title(f"Summed Intensity Profile (hkl: {self.hkl})\n"
-                           f"BandWidth={self.band_width} \n PSNR={np.around(self.psnr, 2)}\n "
-                           f"valid? {self.band_valid}")
+        ax[1, 1].set_title("Normalized summed intensity profile")
 
 
         #
@@ -685,9 +748,10 @@ class RectangularAreaBandDetector:
         # ax[1, 1].legend()
         n = len(summed_profile)
         x = np.arange(n)
-        y = summed_profile/summed_profile.max()
+        max_intensity = np.max(summed_profile)
+        y = summed_profile / max_intensity if max_intensity else summed_profile
 
-        ax[1, 1].plot(x,y, label='Summed Intensity')
+        ax[1, 1].plot(x, y, color="#111111", linewidth=1.8, label='Summed intensity')
         data = np.column_stack((x, y))
 
         fileName = self.config.get("plot_data_export_file_name", "").strip()
@@ -709,21 +773,26 @@ class RectangularAreaBandDetector:
         #                    f"valid? {self.band_valid}")
 
         # Set X and Y axis labels with increased font size
-        ax[1, 1].set_xlabel("Distance in pixels (px)", fontsize=16)  # Increased by 4 points
-        ax[1, 1].set_ylabel("Summed Intensity Profile \n(arb. units)", fontsize=16)  # Increased by 4 points
+        ax[1, 1].set_xlabel("Profile coordinate (px)", fontsize=12)
+        ax[1, 1].set_ylabel("Normalized summed intensity", fontsize=12)
 
         # Increase tick label size
-        ax[1, 1].tick_params(axis='both', which='major', labelsize=14)  # Increased by 4 points
-        ax[1, 1].tick_params(axis='both', which='minor', labelsize=12)  # Adjust minor ticks accordingly
+        ax[1, 1].tick_params(axis='both', which='major', labelsize=10)
+        ax[1, 1].tick_params(axis='both', which='minor', labelsize=8)
 
         # Enable major and minor ticks for both axes
         ax[1, 1].xaxis.set_major_locator(ticker.MultipleLocator(50))  # Adjust as needed
         ax[1, 1].xaxis.set_minor_locator(ticker.MultipleLocator(10))  # Adjust as needed
-        ax[1, 1].yaxis.set_major_locator(ticker.MultipleLocator(1e6))  # Adjust based on intensity scale
-        ax[1, 1].yaxis.set_minor_locator(ticker.MultipleLocator(2e5))  # Adjust for better granularity
+        ax[1, 1].set_ylim(bottom=min(0.0, float(np.nanmin(y))), top=max(1.05, float(np.nanmax(y)) * 1.05))
+        ax[1, 1].yaxis.set_major_locator(ticker.MultipleLocator(0.2))
+        ax[1, 1].yaxis.set_minor_locator(ticker.MultipleLocator(0.05))
+        ax[1, 1].grid(True, which="major", linestyle="-", linewidth=0.4, alpha=0.35)
+        ax[1, 1].grid(True, which="minor", linestyle=":", linewidth=0.3, alpha=0.25)
+        ax[1, 1].legend(loc="best", fontsize=8, frameon=True)
 
-        # Display legend
-        # ax[1, 1].legend(fontsize=10)  # Optionally increase legend font size
+        debug_path = str(self.config.get("debug_plot_output_path", "")).strip()
+        if debug_path:
+            fig.savefig(debug_path, dpi=300, bbox_inches="tight")
+            logging.info("Saved publication-grade band diagnostic figure to %s", debug_path)
 
-        plt.tight_layout()
         plt.show()

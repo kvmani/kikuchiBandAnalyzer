@@ -144,8 +144,16 @@ class OH5ScanFileReader(ScanFileReader):
         if field_ref is None:
             return None
         dataset = self._file[field_ref.path]
-        if dataset.ndim == 3 and dataset.shape[0] == self._nx * self._ny:
+        if dataset.ndim == 3 and dataset.shape[0] <= self._nx * self._ny:
             index = y * self._nx + x
+            if index >= dataset.shape[0]:
+                self._logger.warning(
+                    "Pattern index %d is outside dataset '%s' length %d.",
+                    index,
+                    field_ref.name,
+                    dataset.shape[0],
+                )
+                return None
             pattern = np.asarray(dataset[index], dtype=np.float32)
             return self._reshape_pattern(pattern)
         if dataset.ndim >= 3 and dataset.shape[:2] == (self._ny, self._nx):
@@ -314,7 +322,7 @@ class OH5ScanFileReader(ScanFileReader):
             True if dataset represents patterns.
         """
 
-        if dataset.ndim >= 3 and dataset.shape[0] == self._nx * self._ny:
+        if dataset.ndim >= 3 and dataset.shape[0] <= self._nx * self._ny:
             return True
         if dataset.ndim >= 3 and dataset.shape[:2] == (self._ny, self._nx):
             return True

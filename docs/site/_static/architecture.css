@@ -1,0 +1,24 @@
+:root {
+  --font-stack: Arial, Helvetica, sans-serif;
+  --code-font-stack: "Cascadia Mono", "Consolas", monospace;
+}
+
+body {
+  letter-spacing: 0;
+}
+
+.bd-main .bd-content .bd-article-container {
+  max-width: 980px;
+}
+
+.sd-card {
+  border-radius: 8px;
+}
+
+.math {
+  font-size: 1.02rem;
+}
+
+code.literal {
+  border-radius: 4px;
+}

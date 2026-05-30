@@ -4,11 +4,55 @@ Kikuchi Band Analyzer is a research Python toolkit for measuring Kikuchi band wi
 
 This repo also contains utilities for exporting EBSD patterns to images (useful for machine‑learning workflows) and reconstructing processed images back into HDF5.
 
+Supported EBSD scan sources are being unified behind package readers. EDAX/TSL
+`.oh5`/`.h5` files are supported today, and HKL/Oxford `.ctf` metadata plus an
+external pattern-image folder is now supported by the comparator reader layer
+and by the band-width automator through direct CTF Euler-angle line simulation.
+See [`docs/hkl_ctf_support.md`](docs/hkl_ctf_support.md).
+
+## Documentation
+
+The authoritative documentation is a Sphinx site under `docs/site`. It covers
+installation, debug and normal workflows, TSL `.oh5`/`.h5` processing, HKL
+`.ctf` plus pattern-folder processing, exports, tutorials, mathematical
+formulations, developer standards, and generated API reference pages.
+
+Build it locally with:
+
+```bash
+python -m sphinx -b html docs/site docs/site/_build/html
+```
+
+Then open `docs/site/_build/html/index.html`.
+
 New in this repo version:
 - Band-profile exports now include bandwidth search indices (`band_start_idx`, `band_end_idx`, `central_peak_idx`, `profile_length`) in both JSON and OH5/HDF5 outputs.
 - A visualization-first **Automator GUI** is available for running the pipeline from YAML without freezing the UI.
 - EBSD Comparator can overlay and compare exported `band_profile` vectors from Scan A/B.
 - A dedicated **OH5 to ANG Exporter GUI** supports mapping OH5 scalar fields into ANG columns with sanity checks and live logging.
+- A **Single Pattern Solver** can debug one EBSP from either OH5/H5 or CTF+pattern-folder input with YAML-configured phase, PC convention, detector geometry, simulated Kikuchi overlays, and a chosen `{111}` band profile.
+
+## Single Pattern Solver
+
+Use this before changing batch or GUI automation when debugging pattern center,
+Euler convention, or HKL/Oxford versus EDAX/TSL detector geometry.
+
+Render one configured pattern non-interactively:
+
+```bash
+python -m kikuchiBandAnalyzer.single_pattern_solver.solver --config configs/single_pattern_ctf.yml --json outputs/single_pattern_ctf/solution.json --png outputs/single_pattern_ctf/solution.png
+```
+
+Launch the live PC-adjustment GUI:
+
+```bash
+python -m kikuchiBandAnalyzer.single_pattern_solver.gui --config configs/single_pattern_ctf.yml
+```
+
+The bundled examples are:
+
+- `configs/single_pattern_ctf.yml` for `testData/hkl_ctf_test_data/Subset.ctf` plus `Binned_2x2`.
+- `configs/single_pattern_da.yml` for `testData/DA.oh5`.
 
 ## Quickstart (run on included test data)
 
@@ -24,7 +68,7 @@ New in this repo version:
 3. Run the pipeline:
 
    ```bash
-   python KikuchiBandWidthAutomator.py
+   python KikuchiBandWidthAutomator.py --config bandDetectorOptionsHcp.yml
    ```
 
    In PyCharm, you can instead open `KikuchiBandWidthAutomator.py` and click the green **Run** triangle (or right‑click the file → **Run**).
@@ -49,7 +93,15 @@ Place a matching pair in the same folder (base name must match):
 - `sample.oh5` (or `sample.h5`)
 - `sample.ang`
 
+For HKL/Oxford CTF input, use:
+
+- `sample.ctf`
+- a pattern folder containing one image per pixel
+
 The code expects a common EDAX/TSL layout with patterns under `/<scan_name>/EBSD/Data/Pattern` (the scripts pick the first top‑level group that is not `Manufacturer` or `Version` and treat that as `<scan_name>`).
+
+For CTF comparator workflows, configure the pattern folder under the `ctf`
+section in `configs/ebsd_compare_config.yml`.
 
 ### 2) Choose and edit a YAML config
 
@@ -65,15 +117,17 @@ At minimum, set:
 
 ### 3) Run with your chosen config
 
-`KikuchiBandWidthAutomator.py` currently hard‑codes the default config in `main()`. To run a different YAML:
+Run any YAML configuration non-interactively from the command line:
 
-- Option A (simple): edit `KikuchiBandWidthAutomator.py` to pass your YAML:
-  - `bwa = BandWidthAutomator(config_path="bandDetectorOptionsMagnetite.yml")`
-- Option B (no edits): run from the command line using Python:
+```bash
+python KikuchiBandWidthAutomator.py --config bandDetectorOptionsMagnetite.yml
+```
 
-  ```bash
-  python -c "from KikuchiBandWidthAutomator import BandWidthAutomator; BandWidthAutomator('bandDetectorOptionsMagnetite.yml').run()"
-  ```
+If installed as a package, the equivalent console command is:
+
+```bash
+kikuchi-band-width --config bandDetectorOptionsMagnetite.yml
+```
 
 ## Debug vs normal mode
 
@@ -111,6 +165,19 @@ Derived field definitions:
 JSON annotation details:
 - See [`docs/ebsd_json_schema.md`](docs/ebsd_json_schema.md) for the input/output JSON schemas, `pattern_path` semantics, and mapping to CSV/HDF5 outputs.
 - See [`docs/data_formats.md`](docs/data_formats.md) for the authoritative JSON + OH5/HDF5 dataset schema (paths, shapes, dtypes).
+- See [`docs/testing_strategy.md`](docs/testing_strategy.md) for fixture, golden-data, stress-case, and quality-gate expectations.
+- See [`docs/hkl_ctf_support.md`](docs/hkl_ctf_support.md) for HKL/Oxford CTF plus pattern-folder support.
+- See [`docs/hkl_ctf_test_data_request.md`](docs/hkl_ctf_test_data_request.md) for the small FCC HKL/Oxford fixture request used by tests and tutorials.
+- For the bundled HKL fixture, run `python scripts/convert_hkl_ctf_test_data.py`
+  to create DA-compatible `Subset_HKL_TSL.ang`, `.h5`, and `.oh5` files, then
+  run `python scripts/render_hkl_ctf_tsl_validation.py` to generate the IPF-X
+  comparison slide against `AcquisitionDetails.pptx`.
+- For an end-to-end GUI that prepares either HKL `.ctf` + pattern folders or
+  TSL/EDAX `.oh5`/`.h5` + `.ang` inputs and then runs indexing/band-width
+  analysis, run `python -m kikuchiBandAnalyzer.workflow_gui.main_window`.
+- Tutorial notebooks:
+  - [`docs/notebooks/single_pattern_debug_workflow.ipynb`](docs/notebooks/single_pattern_debug_workflow.ipynb)
+  - [`docs/notebooks/end_to_end_scan_workflow.ipynb`](docs/notebooks/end_to_end_scan_workflow.ipynb)
 
 ### Band-profile datasets (new)
 
@@ -183,6 +250,11 @@ Common commands:
 
 ```bash
 python scripts/make_noisy_oh5.py --config configs/ebsd_compare_config.yml
+python -m kikuchiBandAnalyzer.band_width.detector_cli --source testData/Med_Mn_10k_4x4_00995.png --annotations testData/Med_Mn_10k_4x4_00995.json --config bandDetectorOptionsMagnetiteAccuracyTesting.yml --tile-from-single --debug --json-output outputs/single_pattern_debug/bandOutputData.json
+python KikuchiBandWidthAutomator.py --config bandDetectorOptionsHcp.yml
+python -m kikuchiBandAnalyzer.band_width.cli --config bandDetectorOptionsHcp.yml
+python -m kikuchiBandAnalyzer.band_width.detector_cli --source testData/Med_Mn_10k_4x4_00995.png --annotations testData/Med_Mn_10k_4x4_00995.json --config bandDetectorOptionsMagnetiteAccuracyTesting.yml --tile-from-single
+python KikuchiBandWidthAutomator.py --config configs/ctf_ni_band_width_example.yml
 python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd_compare_config.yml
 python -m kikuchiBandAnalyzer.ebsd_compare.gui.main_window --config configs/ebsd_compare_config.yml --debug
 python scripts/run_ebsd_compare_demo.py --config configs/ebsd_compare_config.yml
@@ -248,11 +320,14 @@ To build a professional Windows installer (single setup EXE that bundles the GUI
 
 - `KikuchiBandWidthAutomator.py`: end‑to‑end batch pipeline (YAML‑driven)
 - `kikuchiBandWidthDetector.py`: per‑pattern detection + batch processing
+- `kikuchiBandAnalyzer/band_width/`: package APIs and CLIs for the band-width pipeline
+- `kikuchiBandAnalyzer/io/`: HDF5/OH5/ANG compatibility helpers
+- `kikuchiBandAnalyzer/fields/`: derived-field registry exports
 - `hdf5_image_export_and_validation.py`: export/reconstruct patterns for ML workflows
 - `bandDetectorOptions*.yml`: example configuration files
 - `VERSION`: single source of truth for the repo version
 - `CHANGELOG.md`: release notes
-- `testData/`: small example datasets and fixtures
+- `testData/`: small example datasets and fixtures; generated outputs should go under ignored `outputs/`, `tmp/`, or external scratch folders
 
 ## Contributing
 

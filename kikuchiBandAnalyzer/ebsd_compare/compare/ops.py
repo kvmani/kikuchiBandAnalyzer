@@ -20,7 +20,7 @@ def delta(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 
 def abs_delta(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Compute the absolute difference map |A - B|.
+    """Compute the absolute difference map between two arrays.
 
     Parameters:
         a: First array.

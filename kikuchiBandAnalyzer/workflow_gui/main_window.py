@@ -1,0 +1,1304 @@
+"""End-to-end GUI for EBSD input preparation and Kikuchi band analysis."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from pathlib import Path
+import shutil
+from typing import Any, Optional
+
+import kikuchipy as kp
+import numpy as np
+from PySide6 import QtCore, QtGui, QtWidgets
+import yaml
+from diffsims.crystallography import ReciprocalLatticeVector
+from diffpy.structure import Atom, Lattice, Structure
+from orix.crystal_map import Phase
+from orix.quaternion import Rotation
+
+from kikuchiBandAnalyzer.automator_gui.worker import AutomatorWorker
+from kikuchiBandAnalyzer.ebsd_compare.band_data import extract_band_profile_payload
+from kikuchiBandAnalyzer.ebsd_compare.gui.band_profile_plot import BandProfilePlot
+from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import GuiLogHandler, LogEmitter, LogViewer
+from kikuchiBandAnalyzer.ebsd_compare.gui.main_window import MapPanel
+from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging
+from kikuchiBandAnalyzer.io.hkl_ctf_to_tsl import convert_hkl_ctf_fixture_to_tsl, parse_ctf_file
+from simulators import CustomKikuchiPatternSimulator
+import utilities as ut
+
+
+DEFAULT_FCC_HKLS = [[1, 1, 1], [2, 0, 0], [2, 2, 0], [3, 1, 1]]
+
+
+class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
+    """Main window for input preparation, indexing, and band-width analysis."""
+
+    def __init__(
+        self,
+        *,
+        input_mode: str = "ctf",
+        source_path: Optional[Path] = None,
+        pattern_dir: Optional[Path] = None,
+        ang_path: Optional[Path] = None,
+        output_dir: Optional[Path] = None,
+    ) -> None:
+        """Initialize the workflow GUI.
+
+        Parameters:
+            input_mode: Initial input mode, either ``ctf`` or ``tsl``.
+            source_path: Optional CTF/OH5/H5 source path.
+            pattern_dir: Optional CTF pattern directory.
+            ang_path: Optional ANG path for TSL mode.
+            output_dir: Optional output directory.
+        """
+
+        super().__init__()
+        self._logger = logging.getLogger(__name__)
+        self._scan_dataset = None
+        self._output_dataset = None
+        self._pattern_field: Optional[str] = None
+        self._selected_xy: Optional[tuple[int, int]] = None
+        self._prepared_h5_path: Optional[Path] = None
+        self._prepared_oh5_path: Optional[Path] = None
+        self._prepared_ang_path: Optional[Path] = None
+        self._resolved_config_path: Optional[Path] = None
+        self._worker: Optional[AutomatorWorker] = None
+        self._log_handler: Optional[GuiLogHandler] = None
+        self._simulated_lines_by_index: dict[int, list[dict[str, object]]] = {}
+
+        self._init_ui()
+        self._attach_log_handler()
+        self._apply_initial_values(input_mode, source_path, pattern_dir, ang_path, output_dir)
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Clean up worker and open files when the window closes.
+
+        Parameters:
+            event: Qt close event.
+
+        Returns:
+            None.
+        """
+
+        self._stop_worker()
+        self._close_datasets()
+        if self._log_handler is not None:
+            logging.getLogger().removeHandler(self._log_handler)
+        super().closeEvent(event)
+
+    def _init_ui(self) -> None:
+        """Build the GUI layout and connect widget signals."""
+
+        self.setWindowTitle("Kikuchi EBSD Workflow")
+        self.resize(1500, 950)
+        central = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(8)
+
+        main_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
+        main_splitter.addWidget(self._build_control_panel())
+        main_splitter.addWidget(self._build_visual_panel())
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        root.addWidget(main_splitter, stretch=1)
+        root.addWidget(self._build_run_panel())
+        self.setCentralWidget(central)
+
+        self._log_viewer = LogViewer(max_lines=4000)
+        dock = QtWidgets.QDockWidget("Log Console", self)
+        dock.setWidget(self._log_viewer)
+        dock.setObjectName("workflow_log_console")
+        dock.setMinimumHeight(210)
+        self.addDockWidget(QtCore.Qt.BottomDockWidgetArea, dock)
+
+    def _build_control_panel(self) -> QtWidgets.QWidget:
+        """Create the left-side workflow controls.
+
+        Returns:
+            Configured control widget.
+        """
+
+        panel = QtWidgets.QWidget()
+        panel.setMinimumWidth(390)
+        panel.setMaximumWidth(470)
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(8)
+
+        input_group = QtWidgets.QGroupBox("Input")
+        form = QtWidgets.QFormLayout(input_group)
+        self._mode_combo = QtWidgets.QComboBox()
+        self._mode_combo.addItem("HKL/Oxford CTF + patterns", "ctf")
+        self._mode_combo.addItem("TSL/EDAX OH5/H5 + ANG", "tsl")
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        form.addRow("Mode", self._mode_combo)
+
+        self._source_edit = self._path_edit()
+        self._source_button = QtWidgets.QPushButton("Browse")
+        self._source_button.clicked.connect(self._browse_source)
+        form.addRow("Source", self._path_row(self._source_edit, self._source_button))
+
+        self._pattern_edit = self._path_edit()
+        self._pattern_button = QtWidgets.QPushButton("Browse")
+        self._pattern_button.clicked.connect(self._browse_pattern_dir)
+        form.addRow("Patterns", self._path_row(self._pattern_edit, self._pattern_button))
+
+        self._ang_edit = self._path_edit()
+        self._ang_button = QtWidgets.QPushButton("Browse")
+        self._ang_button.clicked.connect(self._browse_ang)
+        form.addRow("ANG", self._path_row(self._ang_edit, self._ang_button))
+
+        self._output_edit = self._path_edit()
+        self._output_button = QtWidgets.QPushButton("Browse")
+        self._output_button.clicked.connect(self._browse_output_dir)
+        form.addRow("Output dir", self._path_row(self._output_edit, self._output_button))
+
+        self._template_edit = QtWidgets.QLineEdit("{x}_{y}.tiff")
+        self._template_edit.setToolTip("CTF pattern filename template. Use {x}, {y}, {row}, {col}, or {index}.")
+        form.addRow("CTF pattern map", self._template_edit)
+        layout.addWidget(input_group)
+
+        analysis_group = QtWidgets.QGroupBox("Analysis")
+        analysis_form = QtWidgets.QFormLayout(analysis_group)
+        self._phase_name_edit = QtWidgets.QLineEdit("Cr")
+        self._space_group_spin = QtWidgets.QSpinBox()
+        self._space_group_spin.setRange(1, 230)
+        self._space_group_spin.setValue(225)
+        self._lattice_edit = QtWidgets.QLineEdit("2.91, 2.91, 2.91, 90, 90, 90")
+        self._desired_hkl_edit = QtWidgets.QLineEdit("1,1,1")
+        self._hkl_list_edit = QtWidgets.QPlainTextEdit("[[1,1,1], [2,0,0], [2,2,0], [3,1,1]]")
+        self._hkl_list_edit.setMaximumHeight(58)
+        self._pc_edit = QtWidgets.QLineEdit("0.457, 0.584, 0.696374")
+        self._detector_convention_combo = QtWidgets.QComboBox()
+        self._detector_convention_combo.addItems(["oxford", "edax", "tsl"])
+        self._sample_tilt_spin = self._double_spin(70.0, -180.0, 180.0, 2)
+        self._camera_tilt_spin = self._double_spin(0.0, -180.0, 180.0, 2)
+        self._azimuth_spin = self._double_spin(0.0, -180.0, 180.0, 2)
+        self._ref_width_spin = self._double_spin(1.0, 0.000001, 1e9, 6)
+        self._modulus_spin = self._double_spin(205e9, 0.0, 1e15, 3)
+        self._rect_width_spin = QtWidgets.QSpinBox()
+        self._rect_width_spin.setRange(1, 500)
+        self._rect_width_spin.setValue(20)
+        self._min_psnr_spin = self._double_spin(1.01, 0.0, 1000.0, 3)
+        self._debug_checkbox = QtWidgets.QCheckBox("Debug")
+        analysis_form.addRow("Phase", self._phase_name_edit)
+        analysis_form.addRow("Space group", self._space_group_spin)
+        analysis_form.addRow("Lattice", self._lattice_edit)
+        analysis_form.addRow("Desired HKL", self._desired_hkl_edit)
+        analysis_form.addRow("HKL list", self._hkl_list_edit)
+        analysis_form.addRow("PC", self._pc_edit)
+        analysis_form.addRow("PC convention", self._detector_convention_combo)
+        analysis_form.addRow("Sample tilt", self._sample_tilt_spin)
+        analysis_form.addRow("Detector tilt", self._camera_tilt_spin)
+        analysis_form.addRow("Azimuthal", self._azimuth_spin)
+        analysis_form.addRow("Reference width", self._ref_width_spin)
+        analysis_form.addRow("Elastic modulus", self._modulus_spin)
+        analysis_form.addRow("rectWidth", self._rect_width_spin)
+        analysis_form.addRow("min_psnr", self._min_psnr_spin)
+        analysis_form.addRow("", self._debug_checkbox)
+        layout.addWidget(analysis_group)
+
+        self._prepare_button = QtWidgets.QPushButton("Prepare / Preview")
+        self._prepare_button.clicked.connect(self.prepare_inputs)
+        layout.addWidget(self._prepare_button)
+        self._summary = QtWidgets.QPlainTextEdit()
+        self._summary.setReadOnly(True)
+        self._summary.setMaximumBlockCount(1000)
+        self._summary.setPlaceholderText("Preparation summary will appear here.")
+        layout.addWidget(self._summary, stretch=1)
+        return panel
+
+    def _build_visual_panel(self) -> QtWidgets.QWidget:
+        """Create map, pattern, and profile visualization widgets.
+
+        Returns:
+            Configured visual widget.
+        """
+
+        panel = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        toolbar = QtWidgets.QHBoxLayout()
+        self._map_field_combo = QtWidgets.QComboBox()
+        self._map_field_combo.currentTextChanged.connect(self._refresh_map)
+        self._cursor_label = QtWidgets.QLabel("Cursor: --")
+        toolbar.addWidget(QtWidgets.QLabel("Map"))
+        toolbar.addWidget(self._map_field_combo, stretch=1)
+        toolbar.addWidget(self._cursor_label)
+        layout.addLayout(toolbar)
+
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        self._map_panel = MapPanel("EBSD Map", 2.0, 98.0)
+        self._map_panel.canvas().connect_click(self._on_map_click)
+        self._map_panel.canvas().mpl_connect("motion_notify_event", self._on_map_hover)
+        self._map_panel.connect_contrast_changed(lambda *_: self._refresh_map(False))
+        splitter.addWidget(self._map_panel)
+
+        right = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        right.setChildrenCollapsible(False)
+        self._pattern_panel = MapPanel("Pattern + Band Overlay", 1.0, 99.0)
+        self._pattern_panel.connect_contrast_changed(lambda *_: self._refresh_pattern(False))
+        pattern_container = QtWidgets.QWidget()
+        pattern_layout = QtWidgets.QVBoxLayout(pattern_container)
+        pattern_layout.setContentsMargins(0, 0, 0, 0)
+        self._overlay_checkbox = QtWidgets.QCheckBox("Show detected band")
+        self._overlay_checkbox.setChecked(True)
+        self._overlay_checkbox.stateChanged.connect(self._refresh_profile_and_overlay)
+        pattern_layout.addWidget(self._pattern_panel, stretch=1)
+        pattern_layout.addWidget(self._overlay_checkbox)
+        right.addWidget(pattern_container)
+        self._profile_plot = BandProfilePlot(
+            title="Band Profile",
+            label_a="Selected pixel",
+            label_b="",
+            marker_labels_include_series=False,
+            logger=self._logger,
+        )
+        self._metrics_label = QtWidgets.QLabel("Band metrics: not available")
+        self._metrics_label.setWordWrap(True)
+        profile_container = QtWidgets.QWidget()
+        profile_layout = QtWidgets.QVBoxLayout(profile_container)
+        profile_layout.setContentsMargins(0, 0, 0, 0)
+        profile_layout.addWidget(self._profile_plot, stretch=1)
+        profile_layout.addWidget(self._metrics_label)
+        right.addWidget(profile_container)
+        right.setStretchFactor(0, 2)
+        right.setStretchFactor(1, 1)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        layout.addWidget(splitter, stretch=1)
+        return panel
+
+    def _build_run_panel(self) -> QtWidgets.QWidget:
+        """Create the run/progress panel.
+
+        Returns:
+            Configured run widget.
+        """
+
+        panel = QtWidgets.QGroupBox("Run")
+        layout = QtWidgets.QVBoxLayout(panel)
+        row = QtWidgets.QHBoxLayout()
+        self._run_button = QtWidgets.QPushButton("Run Indexing + Band Width")
+        self._run_button.setEnabled(False)
+        self._run_button.clicked.connect(self._start_run)
+        self._cancel_button = QtWidgets.QPushButton("Cancel")
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.clicked.connect(self._cancel_run)
+        self._stage_label = QtWidgets.QLabel("Stage: idle")
+        row.addWidget(self._run_button)
+        row.addWidget(self._cancel_button)
+        row.addWidget(self._stage_label, stretch=1)
+        layout.addLayout(row)
+        progress_row = QtWidgets.QHBoxLayout()
+        self._progress = QtWidgets.QProgressBar()
+        self._progress.setRange(0, 100)
+        self._pixel_label = QtWidgets.QLabel("Pixel: --")
+        self._eta_label = QtWidgets.QLabel("ETA: --")
+        progress_row.addWidget(self._progress, stretch=1)
+        progress_row.addWidget(self._pixel_label)
+        progress_row.addWidget(self._eta_label)
+        layout.addLayout(progress_row)
+        output_row = QtWidgets.QHBoxLayout()
+        self._output_label = QtWidgets.QLabel("Output: --")
+        self._open_output_button = QtWidgets.QPushButton("Open output")
+        self._open_output_button.setEnabled(False)
+        self._open_output_button.clicked.connect(self._open_output_folder)
+        output_row.addWidget(self._output_label, stretch=1)
+        output_row.addWidget(self._open_output_button)
+        layout.addLayout(output_row)
+        return panel
+
+    def _path_edit(self) -> QtWidgets.QLineEdit:
+        """Create a path line edit.
+
+        Returns:
+            Read-write path edit widget.
+        """
+
+        edit = QtWidgets.QLineEdit()
+        edit.setMinimumWidth(230)
+        return edit
+
+    def _path_row(self, edit: QtWidgets.QLineEdit, button: QtWidgets.QPushButton) -> QtWidgets.QWidget:
+        """Create a compact path-edit row.
+
+        Parameters:
+            edit: Line edit containing the path.
+            button: Browse button.
+
+        Returns:
+            Container widget.
+        """
+
+        row = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit, stretch=1)
+        layout.addWidget(button)
+        return row
+
+    def _double_spin(self, value: float, minimum: float, maximum: float, decimals: int) -> QtWidgets.QDoubleSpinBox:
+        """Create a double spin box.
+
+        Parameters:
+            value: Initial value.
+            minimum: Minimum accepted value.
+            maximum: Maximum accepted value.
+            decimals: Number of decimals to show.
+
+        Returns:
+            Configured spin box.
+        """
+
+        spin = QtWidgets.QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setDecimals(decimals)
+        spin.setValue(value)
+        return spin
+
+    def _attach_log_handler(self) -> None:
+        """Attach a Qt log handler to the root logger."""
+
+        emitter = LogEmitter()
+        emitter.message.connect(self._log_viewer.append_entry)
+        handler = GuiLogHandler(emitter)
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+        logging.getLogger().addHandler(handler)
+        self._log_handler = handler
+
+    def _apply_initial_values(
+        self,
+        input_mode: str,
+        source_path: Optional[Path],
+        pattern_dir: Optional[Path],
+        ang_path: Optional[Path],
+        output_dir: Optional[Path],
+    ) -> None:
+        """Apply optional constructor paths to the controls.
+
+        Parameters:
+            input_mode: Initial mode.
+            source_path: Optional source file.
+            pattern_dir: Optional pattern directory.
+            ang_path: Optional ANG file.
+            output_dir: Optional output directory.
+
+        Returns:
+            None.
+        """
+
+        self._mode_combo.setCurrentIndex(0 if input_mode == "ctf" else 1)
+        if source_path:
+            self._source_edit.setText(str(source_path))
+        if pattern_dir:
+            self._pattern_edit.setText(str(pattern_dir))
+        if ang_path:
+            self._ang_edit.setText(str(ang_path))
+        if output_dir:
+            self._output_edit.setText(str(output_dir))
+        self._on_mode_changed()
+
+    def _on_mode_changed(self) -> None:
+        """Update controls for the active input mode."""
+
+        mode = self._current_mode()
+        is_ctf = mode == "ctf"
+        self._pattern_edit.setEnabled(is_ctf)
+        self._pattern_button.setEnabled(is_ctf)
+        self._template_edit.setEnabled(is_ctf)
+        self._ang_edit.setEnabled(not is_ctf)
+        self._ang_button.setEnabled(not is_ctf)
+        self._detector_convention_combo.setCurrentText("oxford" if is_ctf else "edax")
+        if is_ctf:
+            self._phase_name_edit.setText("Cr")
+            self._lattice_edit.setText("2.91, 2.91, 2.91, 90, 90, 90")
+            self._pc_edit.setText("0.457, 0.584, 0.696374")
+        else:
+            self._phase_name_edit.setText("Ni")
+            self._lattice_edit.setText("3.5236, 3.5236, 3.5236, 90, 90, 90")
+            self._pc_edit.setText("0.547204, 0.710997, 0.696374")
+
+    def _current_mode(self) -> str:
+        """Return the active input mode.
+
+        Returns:
+            ``ctf`` or ``tsl``.
+        """
+
+        return str(self._mode_combo.currentData())
+
+    def _browse_source(self) -> None:
+        """Browse for source input file."""
+
+        if self._current_mode() == "ctf":
+            filt = "CTF Files (*.ctf)"
+        else:
+            filt = "HDF5/OH5 Files (*.oh5 *.h5 *.hdf5)"
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select source", filter=filt)
+        if path:
+            self._source_edit.setText(path)
+
+    def _browse_pattern_dir(self) -> None:
+        """Browse for CTF pattern directory."""
+
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select pattern folder")
+        if path:
+            self._pattern_edit.setText(path)
+
+    def _browse_ang(self) -> None:
+        """Browse for ANG file."""
+
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select ANG", filter="ANG Files (*.ang)")
+        if path:
+            self._ang_edit.setText(path)
+
+    def _browse_output_dir(self) -> None:
+        """Browse for output directory."""
+
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select output folder")
+        if path:
+            self._output_edit.setText(path)
+
+    def prepare_inputs(self) -> None:
+        """Validate selected inputs, create working files, and load preview."""
+
+        try:
+            if self._current_mode() == "ctf":
+                self._prepare_ctf_inputs()
+            else:
+                self._prepare_tsl_inputs()
+            self._write_resolved_config()
+            self._load_preview(self._prepared_h5_path or self._prepared_oh5_path)
+            self._simulate_preview_lines()
+            self._run_button.setEnabled(True)
+        except Exception as exc:
+            self._logger.exception("Preparation failed: %s", exc)
+            QtWidgets.QMessageBox.critical(self, "Preparation failed", str(exc))
+
+    def _prepare_ctf_inputs(self) -> None:
+        """Prepare HKL/Oxford CTF input by translating it to TSL files."""
+
+        ctf_path = Path(self._source_edit.text().strip())
+        pattern_dir = Path(self._pattern_edit.text().strip())
+        output_dir = self._resolved_output_dir()
+        repo_root = Path(__file__).resolve().parents[2]
+        template = self._template_edit.text().strip() or "{x}_{y}.tiff"
+        ctf = parse_ctf_file(ctf_path)
+        self._logger.info("CTF grid: %d x %d, rows=%d.", ctf.nx, ctf.ny, ctf.nx * ctf.ny)
+        result = convert_hkl_ctf_fixture_to_tsl(
+            ctf_path=ctf_path,
+            pattern_dir=pattern_dir,
+            reference_h5_path=repo_root / "testData" / "DA.h5",
+            reference_ang_path=repo_root / "testData" / "DA.ang",
+            output_dir=output_dir,
+            scan_name=ctf_path.stem,
+            phase_name=self._phase_name_edit.text().strip() or "Cr",
+            phase_formula=self._phase_name_edit.text().strip() or "Cr",
+            lattice_parameter=float(self._parse_lattice()[0]),
+            pattern_template=template,
+            logger=self._logger,
+        )
+        self._prepared_h5_path = result.h5_path
+        self._prepared_oh5_path = result.oh5_path
+        self._prepared_ang_path = result.ang_path
+        self._summary.setPlainText(
+            "\n".join(
+                [
+                    "Prepared HKL/Oxford CTF input.",
+                    f"Mapping: {result.pattern_mapping}",
+                    f"Ignored extra images: {result.ignored_pattern_count}",
+                    f"H5: {result.h5_path}",
+                    f"OH5: {result.oh5_path}",
+                    f"ANG: {result.ang_path}",
+                    "Detector convention for indexing: oxford",
+                ]
+            )
+        )
+
+    def _prepare_tsl_inputs(self) -> None:
+        """Prepare TSL/EDAX OH5/H5 plus ANG input for analysis."""
+
+        source = Path(self._source_edit.text().strip())
+        ang = Path(self._ang_edit.text().strip())
+        if not source.exists():
+            raise FileNotFoundError(source)
+        if not ang.exists():
+            raise FileNotFoundError(ang)
+        output_dir = self._resolved_output_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        copied_source = output_dir / source.name
+        copied_ang = output_dir / f"{source.stem}.ang"
+        if source.resolve() != copied_source.resolve():
+            shutil.copy2(source, copied_source)
+        if ang.resolve() != copied_ang.resolve():
+            shutil.copy2(ang, copied_ang)
+        self._prepared_oh5_path = copied_source if copied_source.suffix.lower() == ".oh5" else copied_source.with_suffix(".oh5")
+        self._prepared_h5_path = copied_source
+        self._prepared_ang_path = copied_ang
+        self._summary.setPlainText(
+            "\n".join(
+                [
+                    "Prepared TSL/EDAX input.",
+                    f"Source: {copied_source}",
+                    f"ANG: {copied_ang}",
+                    "Detector convention for indexing: edax",
+                ]
+            )
+        )
+
+    def _write_resolved_config(self) -> None:
+        """Write the run YAML consumed by the background automator."""
+
+        output_dir = self._resolved_output_dir()
+        config: dict[str, Any] = {
+            "output_dir": str(output_dir),
+            "desired_hkl": self._desired_hkl_value(),
+            "desired_hkl_ref_width": float(self._ref_width_spin.value()),
+            "elastic_modulus": float(self._modulus_spin.value()),
+            "rectWidth": int(self._rect_width_spin.value()),
+            "min_psnr": float(self._min_psnr_spin.value()),
+            "smoothing_sigma": 2.0,
+            "strategy": "rectangular_area",
+            "hkl_list": self._parse_hkl_list(),
+            "phase_list": {
+                "name": self._phase_name_edit.text().strip(),
+                "space_group": int(self._space_group_spin.value()),
+                "lattice": self._parse_lattice(),
+                "atoms": [
+                    {
+                        "element": self._phase_name_edit.text().strip(),
+                        "position": [0, 0, 0],
+                    }
+                ],
+            },
+            "debug": bool(self._debug_checkbox.isChecked()),
+            "plot_band_detection": False,
+            "plot_band_detection_condition": "False",
+            "skip_display_EBSDmap": True,
+        }
+        pc = self._parse_float_list(self._pc_edit.text(), expected=3, label="PC")
+        convention = self._detector_convention_combo.currentText()
+        if self._current_mode() == "ctf":
+            config.update(
+                {
+                    "ctf_file_path": self._source_edit.text().strip(),
+                    "pattern_folder": self._pattern_edit.text().strip(),
+                    "pattern_template": self._template_edit.text().strip() or None,
+                    "ctf_euler_direction": "lab2crystal",
+                    "ctf_detector": {
+                        "convention": convention,
+                        "pc": pc,
+                        "sample_tilt": float(self._sample_tilt_spin.value()),
+                        "tilt": float(self._camera_tilt_spin.value()),
+                        "azimuthal": float(self._azimuth_spin.value()),
+                        "px_size": 1.0,
+                        "binning": 1,
+                    },
+                }
+            )
+        else:
+            config.update(
+                {
+                    "h5_file_path": str(self._prepared_h5_path),
+                    "pc": pc,
+                    "detector_convention": convention,
+                    "detector": {
+                        "convention": convention,
+                        "pc": pc,
+                        "sample_tilt": float(self._sample_tilt_spin.value()),
+                        "tilt": float(self._camera_tilt_spin.value()),
+                        "azimuthal": float(self._azimuth_spin.value()),
+                    },
+                }
+            )
+        config_path = output_dir / "workflow_band_width_config.yml"
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        self._resolved_config_path = config_path
+        self._logger.info("Wrote resolved workflow config: %s", config_path)
+
+    def _resolved_output_dir(self) -> Path:
+        """Return the selected output directory.
+
+        Returns:
+            Output directory path.
+        """
+
+        text = self._output_edit.text().strip()
+        if text:
+            return Path(text)
+        source = Path(self._source_edit.text().strip())
+        return source.parent / "workflow_outputs"
+
+    def _parse_hkl_list(self) -> list[list[int]]:
+        """Parse HKL list text.
+
+        Returns:
+            List of HKL triplets.
+        """
+
+        value = yaml.safe_load(self._hkl_list_edit.toPlainText())
+        if not isinstance(value, list):
+            raise ValueError("HKL list must be a list of triplets.")
+        parsed = [[int(v) for v in row] for row in value]
+        if any(len(row) != 3 for row in parsed):
+            raise ValueError("Each HKL entry must contain exactly three integers.")
+        return parsed
+
+    def _parse_lattice(self) -> list[float]:
+        """Parse lattice constants from the lattice edit.
+
+        Returns:
+            Six lattice constants.
+        """
+
+        values = self._parse_float_list(self._lattice_edit.text(), expected=6, label="lattice")
+        return values
+
+    def _desired_hkl_value(self) -> str:
+        """Return the desired HKL in a parser-friendly comma-separated form.
+
+        Returns:
+            Desired HKL string.
+        """
+
+        text = self._desired_hkl_edit.text().strip()
+        if text and "," not in text and " " not in text and len(text) == 3:
+            return ",".join(text)
+        return text
+
+    def _parse_float_list(self, text: str, *, expected: int, label: str) -> list[float]:
+        """Parse a comma-separated float list.
+
+        Parameters:
+            text: Source text.
+            expected: Expected number of floats.
+            label: Field label for errors.
+
+        Returns:
+            Parsed floats.
+        """
+
+        values = [float(part.strip()) for part in text.split(",") if part.strip()]
+        if len(values) != expected:
+            raise ValueError(f"{label} must contain {expected} values.")
+        return values
+
+    def _load_preview(self, path: Optional[Path]) -> None:
+        """Load an HDF5/OH5 preview file into the visualization widgets.
+
+        Parameters:
+            path: Prepared HDF5/OH5 path.
+
+        Returns:
+            None.
+        """
+
+        if path is None:
+            raise ValueError("No prepared HDF5/OH5 path is available.")
+        self._close_datasets()
+        self._scan_dataset = OH5ScanFileReader.from_path(path)
+        fields = self._scan_dataset.catalog.list_scalar_fields()
+        self._map_field_combo.blockSignals(True)
+        self._map_field_combo.clear()
+        priority = ["IQ", "CI", "Fit", "Phase", "Band_Width", "psnr", "strain", "stress"]
+        ordered = [item for item in priority if item in fields] + [item for item in fields if item not in priority]
+        self._map_field_combo.addItems(ordered)
+        self._map_field_combo.blockSignals(False)
+        if ordered:
+            self._map_field_combo.setCurrentText(ordered[0])
+        patterns = self._scan_dataset.catalog.list_pattern_fields()
+        self._pattern_field = "Pattern" if "Pattern" in patterns else (patterns[0] if patterns else None)
+        self._logger.info(
+            "Loaded preview: %s (nx=%d, ny=%d, pattern=%s).",
+            path,
+            self._scan_dataset.nx,
+            self._scan_dataset.ny,
+            self._pattern_field,
+        )
+        self._set_selected_pixel(self._scan_dataset.nx // 2, self._scan_dataset.ny // 2)
+        self._refresh_map(True)
+
+    def _close_datasets(self) -> None:
+        """Close open scan/output datasets."""
+
+        for dataset in (self._scan_dataset, self._output_dataset):
+            if dataset is not None:
+                try:
+                    dataset.close()
+                except Exception:
+                    pass
+        self._scan_dataset = None
+        self._output_dataset = None
+        self._pattern_field = None
+
+    def _set_selected_pixel(self, x: int, y: int) -> None:
+        """Select a pixel and refresh dependent views.
+
+        Parameters:
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            None.
+        """
+
+        self._selected_xy = (int(x), int(y))
+        self._map_panel.canvas().set_marker(int(x), int(y))
+        self._refresh_pattern(True)
+        self._refresh_profile_and_overlay()
+
+    def _on_map_click(self, event: Any) -> None:
+        """Select a pixel from a map click.
+
+        Parameters:
+            event: Matplotlib mouse event.
+
+        Returns:
+            None.
+        """
+
+        dataset = self._output_dataset or self._scan_dataset
+        if dataset is None or event.xdata is None or event.ydata is None:
+            return
+        x = int(round(event.xdata))
+        y = int(round(event.ydata))
+        if 0 <= x < dataset.nx and 0 <= y < dataset.ny:
+            self._set_selected_pixel(x, y)
+
+    def _on_map_hover(self, event: Any) -> None:
+        """Update cursor label from map hover.
+
+        Parameters:
+            event: Matplotlib mouse event.
+
+        Returns:
+            None.
+        """
+
+        if event.xdata is None or event.ydata is None:
+            self._cursor_label.setText("Cursor: --")
+        else:
+            self._cursor_label.setText(f"Cursor: {event.xdata:.1f}, {event.ydata:.1f}")
+
+    def _refresh_map(self, reset_view: bool = True) -> None:
+        """Refresh the selected scalar map.
+
+        Parameters:
+            reset_view: Whether to reset axes limits.
+
+        Returns:
+            None.
+        """
+
+        dataset = self._output_dataset or self._scan_dataset
+        if dataset is None:
+            self._map_panel.canvas().update_data(np.zeros((2, 2), dtype=np.float32), reset_view=True)
+            return
+        field = self._map_field_combo.currentText()
+        if not field:
+            return
+        data = dataset.get_map(field)
+        low, high = self._map_panel.contrast_values()
+        finite = data[np.isfinite(data)]
+        if finite.size:
+            vmin = float(np.percentile(finite, low))
+            vmax = float(np.percentile(finite, high))
+            if vmin == vmax:
+                vmax = vmin + 1.0
+        else:
+            vmin, vmax = 0.0, 1.0
+        self._map_panel.canvas().update_data(data, cmap="gray", vmin=vmin, vmax=vmax, reset_view=reset_view)
+
+    def _refresh_pattern(self, reset_view: bool = True) -> None:
+        """Refresh the selected pattern image.
+
+        Parameters:
+            reset_view: Whether to reset axes limits.
+
+        Returns:
+            None.
+        """
+
+        dataset = self._output_dataset or self._scan_dataset
+        if dataset is None or self._pattern_field is None or self._selected_xy is None:
+            self._pattern_panel.canvas().update_data(np.zeros((16, 16), dtype=np.float32), reset_view=True)
+            return
+        x, y = self._selected_xy
+        pattern = dataset.get_pattern(self._pattern_field, x, y)
+        if pattern is None:
+            self._pattern_panel.canvas().update_data(np.zeros((16, 16), dtype=np.float32), reset_view=True)
+            return
+        low, high = self._pattern_panel.contrast_values()
+        finite = pattern[np.isfinite(pattern)]
+        vmin, vmax = (float(np.percentile(finite, low)), float(np.percentile(finite, high))) if finite.size else (0.0, 1.0)
+        if vmin == vmax:
+            vmax = vmin + 1.0
+        self._pattern_panel.canvas().update_data(pattern, cmap="gray", vmin=vmin, vmax=vmax, reset_view=reset_view)
+        if self._overlay_checkbox.isChecked():
+            self._draw_simulated_lines_for_selected_pixel()
+
+    def _refresh_profile_and_overlay(self) -> None:
+        """Refresh band profile and overlay from output datasets."""
+
+        if self._selected_xy is None:
+            return
+        dataset = self._output_dataset or self._scan_dataset
+        x, y = self._selected_xy
+        if dataset is None or "band_profile" not in dataset.catalog.vectors:
+            self._profile_plot.clear("Run analysis to populate band_profile.")
+            if self._overlay_checkbox.isChecked():
+                self._draw_simulated_lines_for_selected_pixel()
+            else:
+                self._pattern_panel.canvas().clear_overlay_line()
+            self._metrics_label.setText("Band metrics: not available")
+            return
+        payload = extract_band_profile_payload(dataset, x, y, logger=self._logger)
+        if payload.profile is None or not payload.band_valid:
+            self._profile_plot.clear("No valid band at this pixel.")
+            self._pattern_panel.canvas().clear_overlay_line()
+            self._metrics_label.setText("Band metrics: no valid band")
+            return
+        self._profile_plot.update_plot(payload, None, normalize=True, show_markers=True)
+        if self._overlay_checkbox.isChecked() and payload.central_line is not None:
+            line = np.asarray(payload.central_line, dtype=np.float32).ravel()
+            if line.size >= 4 and np.isfinite(line[:4]).all():
+                self._pattern_panel.canvas().set_overlay_line(float(line[0]), float(line[1]), float(line[2]), float(line[3]))
+        else:
+            self._pattern_panel.canvas().clear_overlay_line()
+        self._metrics_label.setText(self._metrics_text(dataset, x, y))
+
+    def _simulate_preview_lines(self) -> None:
+        """Simulate solved-orientation Kikuchi lines for the prepared preview data.
+
+        Returns:
+            None.
+        """
+
+        self._simulated_lines_by_index = {}
+        if self._scan_dataset is None or self._pattern_field is None:
+            return
+        try:
+            eulers = self._read_preview_eulers()
+            phase = self._build_phase()
+            pattern = self._first_available_pattern()
+            detector_cfg = self._detector_config()
+            detector = kp.detectors.EBSDDetector(
+                shape=tuple(int(value) for value in pattern.shape),
+                sample_tilt=float(detector_cfg["sample_tilt"]),
+                tilt=float(detector_cfg["tilt"]),
+                azimuthal=float(detector_cfg["azimuthal"]),
+                convention=str(detector_cfg["convention"]),
+                pc=tuple(float(value) for value in detector_cfg["pc"]),
+            )
+            rotations = Rotation.from_euler(eulers, direction="lab2crystal", degrees=False)
+            rotations = rotations.reshape(self._scan_dataset.ny, self._scan_dataset.nx)
+            reflectors = ReciprocalLatticeVector(phase=phase, hkl=self._parse_hkl_list()).symmetrise()
+            simulator = CustomKikuchiPatternSimulator(reflectors)
+            simulation = simulator.on_detector(detector, rotations)
+            simulation.phase = phase
+            self._simulated_lines_by_index = self._extract_simulated_lines(simulation, phase)
+            line_count = sum(len(lines) for lines in self._simulated_lines_by_index.values())
+            self._logger.info(
+                "Simulated %d principal-family Kikuchi line overlays using %s PC convention.",
+                line_count,
+                detector_cfg["convention"],
+            )
+            self._draw_simulated_lines_for_selected_pixel()
+        except Exception as exc:
+            self._simulated_lines_by_index = {}
+            self._logger.exception("Failed to simulate preview Kikuchi lines: %s", exc)
+
+    def _read_preview_eulers(self) -> np.ndarray:
+        """Read Euler angles from the preview HDF5/OH5 scalar fields.
+
+        Returns:
+            Euler angle array in radians with shape ``(n_pixels, 3)``.
+        """
+
+        if self._scan_dataset is None:
+            raise RuntimeError("No preview dataset is loaded.")
+        radians_fields = ("Phi1", "Phi", "Phi2")
+        degrees_fields = ("Euler1", "Euler2", "Euler3")
+        if all(field in self._scan_dataset.catalog.scalars for field in radians_fields):
+            columns = [self._scan_dataset.get_map(field).reshape(-1) for field in radians_fields]
+            return np.vstack(columns).T.astype(np.float64)
+        if all(field in self._scan_dataset.catalog.scalars for field in degrees_fields):
+            columns = [self._scan_dataset.get_map(field).reshape(-1) for field in degrees_fields]
+            return np.deg2rad(np.vstack(columns).T.astype(np.float64))
+        raise KeyError("Preview dataset does not contain Phi1/Phi/Phi2 or Euler1/Euler2/Euler3 fields.")
+
+    def _build_phase(self) -> Phase:
+        """Build the configured phase for solved-orientation line simulation.
+
+        Returns:
+            Orix phase instance.
+        """
+
+        name = self._phase_name_edit.text().strip() or "Cr"
+        return Phase(
+            name=name,
+            space_group=int(self._space_group_spin.value()),
+            structure=Structure(
+                lattice=Lattice(*self._parse_lattice()),
+                atoms=[Atom(name, [0, 0, 0])],
+            ),
+        )
+
+    def _first_available_pattern(self) -> np.ndarray:
+        """Return the first pattern image available in the prepared preview.
+
+        Returns:
+            Pattern image array.
+        """
+
+        if self._scan_dataset is None or self._pattern_field is None:
+            raise RuntimeError("No preview pattern field is loaded.")
+        for y in range(self._scan_dataset.ny):
+            for x in range(self._scan_dataset.nx):
+                pattern = self._scan_dataset.get_pattern(self._pattern_field, x, y)
+                if pattern is not None:
+                    return np.asarray(pattern)
+        raise RuntimeError("No pattern image is available in the prepared preview.")
+
+    def _detector_config(self) -> dict[str, object]:
+        """Return detector settings from the GUI controls.
+
+        Returns:
+            Detector configuration dictionary.
+        """
+
+        return {
+            "convention": self._detector_convention_combo.currentText(),
+            "pc": self._parse_float_list(self._pc_edit.text(), expected=3, label="PC"),
+            "sample_tilt": float(self._sample_tilt_spin.value()),
+            "tilt": float(self._camera_tilt_spin.value()),
+            "azimuthal": float(self._azimuth_spin.value()),
+        }
+
+    def _extract_simulated_lines(
+        self,
+        simulation: Any,
+        phase: Phase,
+    ) -> dict[int, list[dict[str, object]]]:
+        """Extract visible principal-family Kikuchi line segments from a simulation.
+
+        Parameters:
+            simulation: Geometrical Kikuchi pattern simulation.
+            phase: Crystal phase used to group equivalent HKLs.
+
+        Returns:
+            Row-major pixel index to line dictionaries.
+        """
+
+        coords = np.asarray(simulation.lines_coordinates(index=(), exclude_nan=False), dtype=np.float64)
+        coords = np.around(coords, 3)
+        reflectors = simulation._reflectors.coordinates.round().astype(int)
+        rows, cols, n_lines, _ = coords.shape
+        grouped: dict[int, list[dict[str, object]]] = {}
+        detector_shape = tuple(float(value) for value in simulation.detector.shape)
+        detector_mid = np.array([0.5 * detector_shape[1], 0.5 * detector_shape[0]])
+        distance_threshold = 0.95 * 0.5 * min(detector_shape)
+        family_specs = self._principal_hkl_families(phase)
+        for line_index in range(n_lines):
+            hkl = " ".join(str(int(value)) for value in reflectors[line_index])
+            family_label, family_color = self._line_family_style(hkl, family_specs)
+            if family_label is None:
+                continue
+            for row in range(rows):
+                for col in range(cols):
+                    line = coords[row, col, line_index, :]
+                    if not np.isfinite(line).all():
+                        continue
+                    midpoint = np.array([0.5 * (line[0] + line[2]), 0.5 * (line[1] + line[3])])
+                    is_near_center = float(np.linalg.norm(midpoint - detector_mid)) < distance_threshold
+                    if not is_near_center:
+                        continue
+                    pixel_index = row * cols + col
+                    entry = {
+                        "hkl": family_label,
+                        "reflector": hkl,
+                        "color": family_color,
+                        "central_line": line.tolist(),
+                        "line_mid_xy": midpoint.tolist(),
+                    }
+                    grouped.setdefault(pixel_index, []).append(entry)
+        return grouped
+
+    def _principal_hkl_families(self, phase: Phase) -> list[dict[str, object]]:
+        """Return configured principal HKL families with display styles.
+
+        Parameters:
+            phase: Crystal phase used for symmetry-aware HKL grouping.
+
+        Returns:
+            List of family dictionaries.
+        """
+
+        colors = ["#00e676", "#ffdd33", "#40c4ff", "#ff6d00", "#e040fb", "#ffffff"]
+        families: list[dict[str, object]] = []
+        for index, hkl in enumerate(self._parse_hkl_list()):
+            hkl_text = ",".join(str(int(value)) for value in hkl)
+            label = "{" + "".join(str(abs(int(value))) for value in hkl) + "}"
+            families.append(
+                {
+                    "hkl": hkl_text,
+                    "label": label,
+                    "phase": phase,
+                    "color": colors[index % len(colors)],
+                }
+            )
+        return families
+
+    def _line_family_style(
+        self,
+        hkl: str,
+        families: list[dict[str, object]],
+    ) -> tuple[Optional[str], str]:
+        """Return the display label and color for a simulated reflector.
+
+        Parameters:
+            hkl: Simulated reflector string.
+            families: Principal family definitions.
+
+        Returns:
+            Label and color. Label is ``None`` if the reflector is not in a
+            configured family.
+        """
+
+        for family in families:
+            try:
+                belongs, _ = ut.belongs_to_group(hkl, family["hkl"], phase=family["phase"])
+            except Exception:
+                belongs = False
+            if belongs:
+                return str(family["label"]), str(family["color"])
+        return None, "#00e676"
+
+    def _draw_simulated_lines_for_selected_pixel(self) -> None:
+        """Draw simulated solved-orientation Kikuchi lines for the selected pixel.
+
+        Returns:
+            None.
+        """
+
+        if self._selected_xy is None:
+            return
+        dataset = self._output_dataset or self._scan_dataset
+        if dataset is None:
+            return
+        x, y = self._selected_xy
+        pixel_index = int(y) * int(dataset.nx) + int(x)
+        lines = self._simulated_lines_by_index.get(pixel_index, [])
+        canvas = self._pattern_panel.canvas()
+        if lines and hasattr(canvas, "set_overlay_lines"):
+            display_lines = self._prepare_overlay_labels(lines)
+            canvas.set_overlay_lines(display_lines, color="#00e676", linewidth=1.8, show_labels=True)
+        else:
+            canvas.clear_overlay_line()
+
+    def _prepare_overlay_labels(
+        self,
+        lines: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Choose sparse, deterministic labels for simulated overlay lines.
+
+        Parameters:
+            lines: Simulated line dictionaries.
+
+        Returns:
+            Line dictionaries with label visibility and label positions.
+        """
+
+        counts_by_family: dict[str, int] = {}
+        prepared: list[dict[str, object]] = []
+        for index, line in enumerate(lines):
+            item = dict(line)
+            family = str(item.get("hkl", ""))
+            count = counts_by_family.get(family, 0)
+            item["show_label"] = count < 2
+            counts_by_family[family] = count + 1
+            item["label_fraction"] = 0.12 if (index + count) % 2 == 0 else 0.88
+            prepared.append(item)
+        return prepared
+
+    def _metrics_text(self, dataset: Any, x: int, y: int) -> str:
+        """Format output metrics for a pixel.
+
+        Parameters:
+            dataset: Scan dataset.
+            x: Column index.
+            y: Row index.
+
+        Returns:
+            Human-readable metric string.
+        """
+
+        fields = ["Band_Width", "psnr", "band_valid", "strain", "stress", "band_intensity_ratio"]
+        parts = []
+        for field in fields:
+            try:
+                parts.append(f"{field}={dataset.get_scalar(field, x, y):.4g}")
+            except Exception:
+                continue
+        return "Band metrics: " + (", ".join(parts) if parts else "not available")
+
+    def _start_run(self) -> None:
+        """Start the background automator worker."""
+
+        if self._resolved_config_path is None:
+            QtWidgets.QMessageBox.warning(self, "Not prepared", "Prepare the inputs first.")
+            return
+        self._logger.info("Starting workflow analysis with %s", self._resolved_config_path)
+        self._run_button.setEnabled(False)
+        self._cancel_button.setEnabled(True)
+        self._progress.setValue(0)
+        worker = AutomatorWorker(self._resolved_config_path, parent=self)
+        worker.stage_changed.connect(self._on_worker_stage)
+        worker.progress_changed.connect(self._on_worker_progress)
+        worker.pixel_changed.connect(self._on_worker_pixel)
+        worker.finished_success.connect(self._on_worker_finished)
+        worker.cancelled.connect(self._on_worker_cancelled)
+        worker.failed.connect(self._on_worker_failed)
+        self._worker = worker
+        worker.start()
+
+    def _cancel_run(self) -> None:
+        """Request cancellation from the worker."""
+
+        if self._worker is not None:
+            self._worker.request_cancel()
+            self._cancel_button.setEnabled(False)
+
+    def _stop_worker(self) -> None:
+        """Stop the worker if it is still running."""
+
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.request_cancel()
+            self._worker.wait(2000)
+
+    def _on_worker_stage(self, stage: str, index: int, total: int) -> None:
+        """Update stage label from worker signal."""
+
+        self._stage_label.setText(f"Stage: {stage} ({index}/{total})")
+
+    def _on_worker_progress(self, processed: int, total: int, eta_seconds: float) -> None:
+        """Update progress bar from worker signal."""
+
+        self._progress.setValue(int(round(100.0 * processed / max(1, total))))
+        self._eta_label.setText(f"ETA: {eta_seconds:.1f}s")
+
+    def _on_worker_pixel(self, x: int, y: int, processed: int) -> None:
+        """Update live current-pixel marker from worker signal."""
+
+        self._pixel_label.setText(f"Pixel: X={x}, Y={y}")
+        self._map_panel.canvas().set_secondary_marker(x, y, color="#ff0000")
+
+    def _on_worker_finished(self, output_path: str, summary: object) -> None:
+        """Load completed output and refresh GUI.
+
+        Parameters:
+            output_path: Modified HDF5 path.
+            summary: Summary object emitted by worker.
+
+        Returns:
+            None.
+        """
+
+        self._logger.info("Workflow analysis completed: %s", output_path)
+        self._run_button.setEnabled(True)
+        self._cancel_button.setEnabled(False)
+        self._progress.setValue(100)
+        self._output_label.setText(f"Output: {output_path}")
+        self._open_output_button.setEnabled(True)
+        if self._output_dataset is not None:
+            self._output_dataset.close()
+        self._output_dataset = OH5ScanFileReader.from_path(Path(output_path))
+        fields = self._output_dataset.catalog.list_scalar_fields()
+        self._map_field_combo.clear()
+        priority = ["Band_Width", "psnr", "band_valid", "strain", "stress", "IQ", "CI"]
+        self._map_field_combo.addItems([f for f in priority if f in fields] + [f for f in fields if f not in priority])
+        self._refresh_map(True)
+        self._refresh_pattern(True)
+        self._refresh_profile_and_overlay()
+        self._summary.appendPlainText(f"\nAnalysis complete.\n{summary}")
+
+    def _on_worker_cancelled(self, message: str) -> None:
+        """Handle worker cancellation."""
+
+        self._logger.warning("Workflow cancelled: %s", message)
+        self._run_button.setEnabled(True)
+        self._cancel_button.setEnabled(False)
+        self._stage_label.setText("Stage: cancelled")
+
+    def _on_worker_failed(self, message: str) -> None:
+        """Handle worker failure."""
+
+        self._logger.error("Workflow failed: %s", message)
+        self._run_button.setEnabled(True)
+        self._cancel_button.setEnabled(False)
+        self._stage_label.setText("Stage: failed")
+        QtWidgets.QMessageBox.critical(self, "Analysis failed", message)
+
+    def _open_output_folder(self) -> None:
+        """Open the current output folder."""
+
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(self._resolved_output_dir())))
+
+    def snapshot(self, output_path: Path) -> None:
+        """Save a screenshot of the GUI.
+
+        Parameters:
+            output_path: Destination PNG path.
+
+        Returns:
+            None.
+        """
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pixmap = self.grab()
+        pixmap.save(str(output_path))
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the workflow GUI command-line parser.
+
+    Returns:
+        Configured parser.
+    """
+
+    parser = argparse.ArgumentParser(description="Run the Kikuchi workflow GUI.")
+    parser.add_argument("--mode", choices=["ctf", "tsl"], default="ctf")
+    parser.add_argument("--source", type=Path)
+    parser.add_argument("--patterns", type=Path)
+    parser.add_argument("--ang", type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    return parser
+
+
+def main() -> None:
+    """Run the workflow GUI application."""
+
+    args = build_arg_parser().parse_args()
+    configure_logging(False, None)
+    app = QtWidgets.QApplication([])
+    window = WorkflowGuiMainWindow(
+        input_mode=args.mode,
+        source_path=args.source,
+        pattern_dir=args.patterns,
+        ang_path=args.ang,
+        output_dir=args.output_dir,
+    )
+    window.show()
+    app.exec()
+
+
+if __name__ == "__main__":
+    main()

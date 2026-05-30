@@ -12,7 +12,7 @@ import numpy as np
 
 from kikuchiBandAnalyzer.ebsd_compare.compare.engine import ComparisonEngine
 from kikuchiBandAnalyzer.ebsd_compare.field_selection import resolve_scalar_fields
-from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.ebsd_compare.readers.factory import open_scan_dataset
 from kikuchiBandAnalyzer.ebsd_compare.registration.alignment import alignment_from_config
 from kikuchiBandAnalyzer.ebsd_compare.simulated import SimulatedScanFactory
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging, load_yaml_config
@@ -43,8 +43,20 @@ class CompareExporter:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         field_aliases = self._config.get("field_aliases", {})
-        dataset_a = OH5ScanFileReader.from_path(scan_a, field_aliases=field_aliases)
-        dataset_b = OH5ScanFileReader.from_path(scan_b, field_aliases=field_aliases)
+        dataset_a = open_scan_dataset(
+            scan_a,
+            config=self._config,
+            role="scan_a",
+            field_aliases=field_aliases,
+            logger=self._logger,
+        )
+        dataset_b = open_scan_dataset(
+            scan_b,
+            config=self._config,
+            role="scan_b",
+            field_aliases=field_aliases,
+            logger=self._logger,
+        )
         try:
             self.export_datasets(dataset_a, dataset_b, output_dir)
         finally:
@@ -126,13 +138,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--scan-a",
         type=Path,
         required=False,
-        help="Path to scan A OH5 file.",
+        help="Path to scan A file (.oh5/.h5/.hdf5/.ctf).",
     )
     parser.add_argument(
         "--scan-b",
         type=Path,
         required=False,
-        help="Path to scan B OH5 file.",
+        help="Path to scan B file (.oh5/.h5/.hdf5/.ctf).",
     )
     parser.add_argument(
         "--output-dir",

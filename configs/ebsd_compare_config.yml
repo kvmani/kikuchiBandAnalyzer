@@ -17,8 +17,26 @@ ebsd_compare:
   field_aliases:
     IQ:
       - Image Quality
+      - BC
+      - Band Contrast
     CI:
       - Confidence Index
+      - MAD
+      - Mean Angular Deviation
+    Fit:
+      - MAD
+      - Error
+  ctf:
+    # HKL/Oxford CTF files store indexing metadata in text and patterns in a
+    # separate image folder. Pattern directories can be set globally or per scan.
+    pattern_dir: null
+    pattern_dirs:
+      scan_a: null
+      scan_b: null
+    # Optional filename template resolved with x, y, row, col, and index fields.
+    # Example: "pattern_x{x}_y{y}.png". If omitted, images are read in sorted
+    # row-major order from the pattern directory.
+    pattern_template: null
   alignment:
     enabled: true
     auto_launch_on_mismatch: true
