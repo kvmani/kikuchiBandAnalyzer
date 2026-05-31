@@ -18,11 +18,17 @@ from diffpy.structure import Atom, Lattice, Structure
 from matplotlib.figure import Figure
 from orix.crystal_map import Phase, PhaseList
 from orix.quaternion import Rotation
+from PIL import Image
 from scipy.ndimage import gaussian_filter1d, map_coordinates
 
 from kikuchiBandAnalyzer.ebsd_compare.band_data import BandProfilePayload, normalize_profile
 from kikuchiBandAnalyzer.ebsd_compare.readers.ctf_reader import CtfPatternScanFileReader
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
+from kikuchiBandAnalyzer.single_pattern_solver.hough import (
+    HoughDiagnostic,
+    extract_hough_diagnostic,
+    hough_diagnostic_to_json,
+)
 from simulators import CustomKikuchiPatternSimulator
 from strategies import RectangularAreaBandDetector
 import utilities as ut
@@ -58,6 +64,7 @@ class SinglePatternSolution:
         profile_payload: Optional detected band-profile payload.
         selected_band: Optional raw detector result for the chosen line.
         hough_summary: Optional Hough/indexing diagnostic summary.
+        hough_diagnostic: Optional Hough transform diagnostic.
     """
 
     config: SinglePatternConfig
@@ -70,6 +77,7 @@ class SinglePatternSolution:
     profile_payload: Optional[BandProfilePayload]
     selected_band: Optional[dict[str, Any]]
     hough_summary: Optional[dict[str, Any]]
+    hough_diagnostic: Optional[HoughDiagnostic]
 
 
 def load_single_pattern_config(path: Path | str) -> SinglePatternConfig:
@@ -108,6 +116,10 @@ def solve_single_pattern(
     pattern, x, y, eulers_rad = _load_pattern_and_eulers(config)
     phase = _build_phase(config.raw["phase"])
     detector, detector_summary = _build_detector(config, pattern.shape)
+    hough_summary, hough_diagnostic = _try_hough_summary(pattern, detector, phase, config, log)
+    if hough_summary and hough_summary.get("success") and hough_summary.get("use_indexed_orientation"):
+        eulers_rad = np.asarray(hough_summary["indexed_eulers_rad"], dtype=np.float64)
+        log.info("Using kikuchipy Hough-indexed orientation for simulated overlay.")
     rotations = Rotation.from_euler(
         eulers_rad.reshape(1, 3),
         direction=str(config.raw.get("orientation", {}).get("direction", "lab2crystal")),
@@ -121,7 +133,6 @@ def solve_single_pattern(
     simulation.phase = phase
     lines = _extract_principal_lines(simulation, phase, config)
     selected_band, profile_payload = _detect_one_band(pattern, lines, phase, config, log)
-    hough_summary = _try_hough_summary(pattern, detector, phase, config, log)
     log.info(
         "Solved single pattern x=%d y=%d with %d simulated principal-family lines.",
         x,
@@ -139,6 +150,7 @@ def solve_single_pattern(
         profile_payload=profile_payload,
         selected_band=selected_band,
         hough_summary=hough_summary,
+        hough_diagnostic=hough_diagnostic,
     )
 
 
@@ -165,6 +177,7 @@ def write_solution_json(solution: SinglePatternSolution, path: Path | str) -> No
         "simulated_lines": solution.lines,
         "selected_band": _json_ready(solution.selected_band),
         "hough_summary": _json_ready(solution.hough_summary),
+        "hough_diagnostic": hough_diagnostic_to_json(solution.hough_diagnostic),
     }
     if solution.profile_payload is not None:
         payload["band_profile"] = {
@@ -272,7 +285,15 @@ def _load_pattern_and_eulers(config: SinglePatternConfig) -> tuple[np.ndarray, i
             )
         dataset.close()
         return _require_pattern(pattern), x, y, eulers
-    raise ValueError("input.type must be 'ctf' or 'oh5'.")
+    if source_type in {"image", "pattern", "single"}:
+        with Image.open(Path(source["path"])) as image:
+            pattern = np.asarray(image.convert("L"), dtype=np.float32)
+        eulers_deg = source.get("eulers_deg", [0.0, 0.0, 0.0])
+        eulers = np.deg2rad(np.asarray(eulers_deg, dtype=np.float64))
+        if eulers.shape != (3,):
+            raise ValueError("input.eulers_deg must contain exactly three Euler angles.")
+        return _require_pattern(pattern), x, y, eulers
+    raise ValueError("input.type must be 'ctf', 'oh5', or 'image'.")
 
 
 def _require_pattern(pattern: Optional[np.ndarray]) -> np.ndarray:
@@ -636,7 +657,7 @@ def _try_hough_summary(
     phase: Phase,
     config: SinglePatternConfig,
     logger: logging.Logger,
-) -> Optional[dict[str, Any]]:
+) -> tuple[Optional[dict[str, Any]], Optional[HoughDiagnostic]]:
     """Try kikuchipy Hough indexing for one pattern and summarize diagnostics.
 
     Parameters:
@@ -647,12 +668,12 @@ def _try_hough_summary(
         logger: Logger.
 
     Returns:
-        Hough diagnostic summary, or None when unavailable.
+        Hough diagnostic summary and optional transform details.
     """
 
     hough_cfg = dict(config.raw.get("hough", {}))
     if not bool(hough_cfg.get("enabled", False)):
-        return None
+        return None, None
     try:
         signal = kp.signals.EBSD(pattern.reshape((1, 1) + pattern.shape))
         phase_list = PhaseList(phase)
@@ -670,14 +691,32 @@ def _try_hough_summary(
             return_band_data=True,
             verbose=0,
         )
+        diagnostic = extract_hough_diagnostic(
+            pattern,
+            detector,
+            phase,
+            _hkl_list(config),
+            n_bands=int(hough_cfg.get("n_bands", 10)),
+            t_sigma=float(hough_cfg.get("t_sigma", 2)),
+            r_sigma=float(hough_cfg.get("r_sigma", 2)),
+            band_data_override=band_data,
+            logger=logger,
+        )
         return {
             "success": True,
             "xmap_shape": list(xmap.shape),
             "band_data_type": type(band_data).__name__,
-        }
+            "fit": _json_ready(getattr(xmap, "fit", None)),
+            "phase_id": _json_ready(getattr(xmap, "phase_id", None)),
+            "indexed_eulers_rad": np.asarray(xmap.rotations.to_euler()).reshape(-1, 3)[0].tolist(),
+            "indexed_eulers_deg": np.rad2deg(
+                np.asarray(xmap.rotations.to_euler()).reshape(-1, 3)[0]
+            ).tolist(),
+            "use_indexed_orientation": bool(hough_cfg.get("use_indexed_orientation", False)),
+        }, diagnostic
     except Exception as exc:
         logger.warning("Single-pattern Hough indexing failed: %s", exc)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc)}, None
 
 
 def clip_segment_to_bounds(

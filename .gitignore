@@ -73,6 +73,7 @@ docs/site/_build/
 docs/notebooks/.ipynb_checkpoints/
 
 # Office and spreadsheet exports generated during analysis
+~$*
 *.xlsx
 *_profile.csv
 *_profiles.csv

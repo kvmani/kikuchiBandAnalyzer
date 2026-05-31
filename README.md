@@ -49,6 +49,17 @@ Launch the live PC-adjustment GUI:
 python -m kikuchiBandAnalyzer.single_pattern_solver.gui --config configs/single_pattern_ctf.yml
 ```
 
+The same GUI is also exposed as `indexing-debug-gui`. It supports CTF plus
+pattern-folder input, OH5/H5 scan input, and a single EBSP image. For scan
+inputs, use **Load Source / Middle Pixel** to read the scan dimensions and
+default the selected pixel to the middle of the map before tuning PC and
+detector geometry. Enable **Run kikuchipy Hough indexing** and **Overlay indexed
+orientation** when you want the overlay to come from a fresh single-pattern
+indexing result rather than the Euler angles stored in the input file.
+
+For a student-facing PC calibration workflow, see
+[`docs/single_pattern_pc_calibration.md`](docs/single_pattern_pc_calibration.md).
+
 The bundled examples are:
 
 - `configs/single_pattern_ctf.yml` for `testData/hkl_ctf_test_data/Subset.ctf` plus `Binned_2x2`.
