@@ -67,6 +67,9 @@ def _create_min_h5(path: Path, scan_name: str, n_pixels: int) -> None:
         ebsd.create_group("Header")
         data = ebsd.create_group("Data")
         data.create_dataset("CI", data=np.zeros(n_pixels, dtype=np.float32))
+        data.create_dataset("Phi1", data=np.linspace(0.1, 0.2, n_pixels, dtype=np.float32))
+        data.create_dataset("Phi", data=np.linspace(0.3, 0.4, n_pixels, dtype=np.float32))
+        data.create_dataset("Phi2", data=np.linspace(0.5, 0.6, n_pixels, dtype=np.float32))
 
 
 def test_save_results_to_json_includes_band_profile(tmp_path) -> None:
@@ -100,6 +103,20 @@ def test_save_results_to_json_includes_band_profile(tmp_path) -> None:
     assert data[0]["bands"][0]["central_peak_idx"] == 1
     assert data[0]["bands"][0]["band_end_idx"] == 2
     assert data[0]["bands"][0]["profile_length"] == 3
+
+
+def test_save_results_to_csv_handles_no_valid_bands(tmp_path) -> None:
+    """Write header-only CSV files instead of raising for empty band results."""
+
+    raw_path = tmp_path / "raw.csv"
+    filtered_path = tmp_path / "filtered.csv"
+    ut.save_results_to_csv(
+        [{"x,y": [0, 0], "ind": 0, "bands": []}],
+        raw_path=raw_path,
+        filtered_path=filtered_path,
+    )
+    assert "band_valid" in raw_path.read_text(encoding="utf-8")
+    assert "band_valid" in filtered_path.read_text(encoding="utf-8")
 
 
 def test_prepare_json_input_handles_optional_pattern_path(tmp_path) -> None:
@@ -151,11 +168,16 @@ def test_batch_processor_preserves_pattern_path(monkeypatch) -> None:
 
 
 def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
-    """Write band_profile and central_line datasets to HDF5."""
+    """Write band metrics while preserving original Euler datasets."""
     scan_name = "Scan"
     n_pixels = 2
     h5_path = tmp_path / "scan_modified.oh5"
     _create_min_h5(h5_path, scan_name, n_pixels)
+    with h5py.File(h5_path, "r") as handle:
+        original_eulers = {
+            name: handle[f"/{scan_name}/EBSD/Data/{name}"][()].copy()
+            for name in ("Phi1", "Phi", "Phi2")
+        }
 
     config_path = tmp_path / "config.yml"
     config_path.write_text(
@@ -231,6 +253,8 @@ def test_export_results_writes_band_profile_dataset(tmp_path) -> None:
         peak_idx = handle[f"/{scan_name}/EBSD/Data/central_peak_idx"][()]
         profile_len = handle[f"/{scan_name}/EBSD/Data/profile_length"][()]
         band_valid = handle[f"/{scan_name}/EBSD/Data/band_valid"][()]
+        for name, expected in original_eulers.items():
+            assert np.array_equal(handle[f"/{scan_name}/EBSD/Data/{name}"][()], expected)
 
     ang_output_path = tmp_path / "scan_modified.ang"
     assert ang_output_path.exists()

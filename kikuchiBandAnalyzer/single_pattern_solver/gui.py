@@ -20,6 +20,7 @@ from kikuchiBandAnalyzer.single_pattern_solver.solver import (
     SinglePatternSolution,
     _draw_lines_on_axes,
     _draw_profile_on_axes,
+    image_line_text_angle,
     load_single_pattern_config,
     render_solution,
     solve_single_pattern,
@@ -228,7 +229,7 @@ class SinglePatternCanvas(FigureCanvas):
         )
         label_x = x1 + 0.62 * (x2 - x1)
         label_y = y1 + 0.62 * (y2 - y1)
-        angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        angle = image_line_text_angle(x1, y1, x2, y2)
         hkl = str(band.get("hkl_group") or band.get("hkl") or "band")
         self._pattern_axes.text(
             label_x,

@@ -517,6 +517,25 @@ def export_ang_with_prias_metrics(
                 raise KeyError(f"Required dataset not found: {dataset_path}")
             arr = np.asarray(h5file[dataset_path][()], dtype=np.float64).ravel(order="C")
             values[key] = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        supplemental_dataset_map = {
+            "phi1": "Phi1",
+            "phi": "Phi",
+            "phi2": "Phi2",
+            "x": "X Position",
+            "y": "Y Position",
+            "iq": "IQ",
+            "ci": "CI",
+            "phase index": "Phase",
+            "sem": "SEM Signal",
+            "fit": "Fit",
+        }
+        supplemental_values: Dict[str, np.ndarray] = {}
+        data_group = h5file[data_root]
+        for column_name, dataset_name in supplemental_dataset_map.items():
+            if dataset_name in data_group:
+                supplemental_values[column_name] = np.asarray(
+                    data_group[dataset_name][()], dtype=np.float64
+                ).ravel(order="C")
 
     expected_pixels = int(nrows) * int(ncols_even)
     for key, arr in values.items():
@@ -545,10 +564,33 @@ def export_ang_with_prias_metrics(
         rewritten_lines.append("  ".join(parts) + "\n")
         pixel_index += 1
 
-    if pixel_index != expected_pixels:
-        raise ValueError(
-            f"ANG data row count {pixel_index} does not match expected pixel count {expected_pixels}."
+    if pixel_index < expected_pixels:
+        missing_count = expected_pixels - pixel_index
+        logging.warning(
+            "ANG template contains %d data rows for a %d-pixel grid; synthesizing "
+            "%d missing rows from original HDF5 scalar/Euler datasets.",
+            pixel_index,
+            expected_pixels,
+            missing_count,
         )
+        while pixel_index < expected_pixels:
+            parts = []
+            for normalized_name in normalized_headers:
+                if normalized_name == required_prias_columns["bottom"]:
+                    value = values["bottom"][pixel_index]
+                elif normalized_name == required_prias_columns["center"]:
+                    value = values["center"][pixel_index]
+                elif normalized_name == required_prias_columns["top"]:
+                    value = values["top"][pixel_index]
+                else:
+                    source = supplemental_values.get(normalized_name)
+                    value = source[pixel_index] if source is not None and pixel_index < source.size else 0.0
+                if normalized_name == "phase index":
+                    parts.append(str(int(round(float(value)))))
+                else:
+                    parts.append(f"{float(value):.6f}")
+            rewritten_lines.append("  ".join(parts) + "\n")
+            pixel_index += 1
 
     with destination.open("w", encoding="utf-8") as handle:
         handle.writelines(header_lines)
@@ -599,6 +641,33 @@ def save_results_to_json(results, path="bandOutputData.json"):
 
 
 def save_results_to_csv(results, raw_path="bandOutputData.csv", filtered_path="filtered_band_data.csv"):
+    """Write raw and best-valid-band CSV tables.
+
+    Parameters:
+        results: Per-pixel band detection results.
+        raw_path: Destination for all detected bands.
+        filtered_path: Destination for the best valid band per pixel.
+
+    Returns:
+        None.
+    """
+
+    columns = [
+        "X,Y",
+        "Ind",
+        "hkl",
+        "hkl_group",
+        "Central Line",
+        "Line Distance",
+        "Band Width",
+        "band_peak",
+        "band_bkg",
+        "psnr",
+        "efficientlineIntensity",
+        "defficientlineIntensity",
+        "efficientDefficientRatio",
+        "band_valid",
+    ]
     rows = []
     for res in results:
         xy = res.get("x,y")
@@ -634,12 +703,19 @@ def save_results_to_csv(results, raw_path="bandOutputData.csv", filtered_path="f
                 }
             )
 
-    df = pd.DataFrame(rows).round(3)
+    df = pd.DataFrame(rows, columns=columns).round(3)
     df.to_csv(raw_path, index=False)
     logging.info("Raw results saved to %s", raw_path)
 
-    filt = df[df["band_valid"]]
-    best = filt.loc[filt.groupby("Ind")["psnr"].idxmax()]
+    filt = df[df["band_valid"].fillna(False).astype(bool)]
+    if filt.empty:
+        best = pd.DataFrame(columns=columns)
+        logging.warning(
+            "No valid bands passed the configured HKL/PSNR/width criteria; "
+            "writing an empty filtered CSV instead of failing."
+        )
+    else:
+        best = filt.loc[filt.groupby("Ind")["psnr"].idxmax()]
     best.to_csv(filtered_path, index=False)
     logging.info("Filtered results saved to %s", filtered_path)
 

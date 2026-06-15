@@ -542,7 +542,7 @@ def _detect_one_band(
                 line["reflector"],
                 exc,
             )
-            result = _detect_profile_fallback(pattern, line, detector_config)
+            result = detect_profile_without_opencv(pattern, line, detector_config)
         result.update(
             {
                 "hkl": line["reflector"],
@@ -572,7 +572,7 @@ def _detect_one_band(
     return None, None
 
 
-def _detect_profile_fallback(
+def detect_profile_without_opencv(
     pattern: np.ndarray,
     line: dict[str, Any],
     config: dict[str, Any],
@@ -758,6 +758,27 @@ def clip_segment_to_bounds(
     return [x1 + u1 * dx, y1 + u1 * dy, x1 + u2 * dx, y1 + u2 * dy]
 
 
+def image_line_text_angle(x1: float, y1: float, x2: float, y2: float) -> float:
+    """Return an upright annotation angle parallel to an image line.
+
+    Parameters:
+        x1: Line start X coordinate.
+        y1: Line start Y coordinate.
+        x2: Line end X coordinate.
+        y2: Line end Y coordinate.
+
+    Returns:
+        Display rotation angle in degrees within ``[-90, 90]``.
+    """
+
+    angle = -float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+    if angle > 90.0:
+        angle -= 180.0
+    elif angle < -90.0:
+        angle += 180.0
+    return angle
+
+
 def _draw_lines_on_axes(axes: Any, shape: tuple[int, int], lines: list[dict[str, Any]]) -> None:
     """Draw clipped lines and sparse angle-matched labels on axes.
 
@@ -785,7 +806,7 @@ def _draw_lines_on_axes(axes: Any, shape: tuple[int, int], lines: list[dict[str,
             fraction = 0.16 if (count + index) % 2 == 0 else 0.84
             label_x = x1 + fraction * (x2 - x1)
             label_y = y1 + fraction * (y2 - y1)
-            angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+            angle = image_line_text_angle(x1, y1, x2, y2)
             axes.text(
                 label_x,
                 label_y,

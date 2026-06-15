@@ -10,8 +10,16 @@ from kikuchiBandAnalyzer.single_pattern_solver.solver import (
     SinglePatternConfig,
     clip_segment_to_bounds,
     load_single_pattern_config,
+    image_line_text_angle,
     solve_single_pattern,
 )
+
+
+def test_image_line_text_angle_matches_inverted_image_axes() -> None:
+    """Keep line annotations parallel and upright on image axes."""
+
+    assert image_line_text_angle(0.0, 0.0, 1.0, 1.0) == -45.0
+    assert image_line_text_angle(1.0, 1.0, 0.0, 0.0) == -45.0
 
 
 def test_clip_segment_to_bounds_clips_to_image() -> None:

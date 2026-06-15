@@ -126,7 +126,13 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def simulate_and_index(self):
-        """Simulate Kikuchi patterns and determine band locations."""
+        """Simulate production band locations from acquisition orientations.
+
+        Hough indexing is intentionally excluded from the batch production path.
+        It is available in the single-pattern diagnostic solver, but exported
+        HDF5/OH5/ANG orientations and production band locations must continue to
+        use the Euler angles supplied by the acquisition data.
+        """
         annotation_path = self.config.get("band_annotation_json_path") or self.config.get(
             "line_annotation_json_path"
         )
@@ -145,6 +151,9 @@ class BandWidthAutomator:
             return
         if self.source_format == "ctf":
             self.grouped_dict_list = self._simulate_ctf_band_lines()
+            return
+        if str(self.config.get("orientation_source", "original")).lower() == "original":
+            self.grouped_dict_list = self._simulate_h5_original_band_lines()
             return
         phase_cfg = self.config["phase_list"]
         phase_list = PhaseList(
@@ -207,6 +216,93 @@ class BandWidthAutomator:
             maps_nav_rgb = kp.draw.get_rgb_navigator(rgb.reshape(xmap.shape + (3,)))
             self.dataset.plot(maps_nav_rgb)
             plt.show()
+
+    def _simulate_h5_original_band_lines(self):
+        """Simulate HDF5/OH5 band annotations from stored Euler datasets.
+
+        Returns:
+            Grouped line-annotation dictionaries consumable by
+            :class:`KikuchiBatchProcessor`.
+
+        Raises:
+            KeyError: If no supported Euler triplet exists in the HDF5 data.
+            ValueError: If the Euler count does not match the pattern grid.
+        """
+
+        phase_list = self._build_phase_list()
+        phase = phase_list[0]
+        euler = self._read_h5_original_eulers()
+        expected = int(np.prod(self.dataset.data.shape[:2]))
+        if euler.shape != (expected, 3):
+            raise ValueError(
+                "Stored Euler count does not match loaded pattern count: "
+                f"Euler shape={euler.shape}, expected=({expected}, 3)."
+            )
+
+        header_data = ut.extract_header_data(str(self.modified_data_path))
+        detector_cfg = dict(self.config.get("detector", {}) or {})
+        detector = kp.detectors.EBSDDetector(
+            shape=tuple(int(value) for value in self.dataset.data.shape[-2:]),
+            sample_tilt=float(detector_cfg.get("sample_tilt", header_data.get("Sample Tilt", 0.0))),
+            tilt=float(detector_cfg.get("tilt", header_data.get("Camera Elevation Angle", 0.0))),
+            azimuthal=float(detector_cfg.get("azimuthal", header_data.get("Camera Azimuthal Angle", 0.0))),
+            convention=str(detector_cfg.get("convention", self.config.get("detector_convention", "edax"))),
+            pc=tuple(detector_cfg.get("pc", self.config.get("pc", header_data.get("pc", (0.5, 0.5, 0.5))))),
+        )
+        direction = str(self.config.get("orientation_direction", "lab2crystal"))
+        rotations = Rotation.from_euler(euler, direction=direction, degrees=False)
+        rotations = rotations.reshape(*self.dataset.data.shape[:2])
+        reflectors = ReciprocalLatticeVector(
+            phase=phase,
+            hkl=self.config["hkl_list"],
+        ).symmetrise()
+        simulation = CustomKikuchiPatternSimulator(reflectors).on_detector(detector, rotations)
+        simulation.phase = phase
+        _, grouped = simulation.as_markers(
+            kikuchi_line_labels=True,
+            desired_hkl=str(self.config.get("desired_hkl", "1,1,1")),
+        )
+        if len(grouped) != expected:
+            grouped = self._pad_grouped_annotations(grouped)
+        logging.info(
+            "Generated production Kikuchi-line annotations for %d HDF5/OH5 pixels "
+            "from the original stored Euler angles.",
+            len(grouped),
+        )
+        return grouped
+
+    def _read_h5_original_eulers(self) -> np.ndarray:
+        """Read original Euler angles from the working HDF5 file in radians.
+
+        Returns:
+            Euler angle array shaped ``(n_pixels, 3)`` in radians.
+
+        Raises:
+            KeyError: If neither the TSL radian nor degree Euler fields exist.
+        """
+
+        with h5py.File(self.modified_data_path, "r") as handle:
+            scan_name = next(
+                name
+                for name, item in handle.items()
+                if name not in {"Manufacturer", "Version"} and isinstance(item, h5py.Group)
+            )
+            data = handle[f"/{scan_name}/EBSD/Data"]
+            radians_fields = ("Phi1", "Phi", "Phi2")
+            degrees_fields = ("Euler1", "Euler2", "Euler3")
+            if all(name in data for name in radians_fields):
+                return np.column_stack(
+                    [np.asarray(data[name][()]).reshape(-1) for name in radians_fields]
+                ).astype(np.float64)
+            if all(name in data for name in degrees_fields):
+                degrees = np.column_stack(
+                    [np.asarray(data[name][()]).reshape(-1) for name in degrees_fields]
+                ).astype(np.float64)
+                return np.deg2rad(degrees)
+        raise KeyError(
+            "HDF5/OH5 input contains neither Phi1/Phi/Phi2 nor "
+            "Euler1/Euler2/Euler3 orientation datasets."
+        )
 
     def _build_phase_list(self) -> PhaseList:
         """Build a PhaseList from configuration.
@@ -790,10 +886,21 @@ class BandWidthAutomator:
             )
 
         if self.source_format == "ctf":
-            ang_output_path = export_ctf_with_prias_metrics(self.modified_data_path)
+            ang_template = self.config.get("ang_template_path")
+            if ang_template and Path(str(ang_template)).exists():
+                ang_output_path = ut.export_ang_with_prias_metrics(
+                    original_ang_path=Path(str(ang_template)),
+                    modified_h5_path=self.modified_data_path,
+                )
+            else:
+                ang_output_path = export_ctf_with_prias_metrics(self.modified_data_path)
             oh5_output_path = self._export_oh5_copy()
+            self._validate_exported_ang(
+                ang_output_path,
+                reference_path=Path(str(ang_template)) if ang_template else None,
+            )
             logging.info(
-                "Exported CTF-derived ANG and OH5 outputs: %s, %s.",
+                "Exported CTF-derived ANG and OH5 outputs while preserving original Euler values: %s, %s.",
                 ang_output_path,
                 oh5_output_path,
             )
@@ -805,6 +912,7 @@ class BandWidthAutomator:
                 modified_h5_path=self.modified_data_path,
             )
             logging.info("Exported companion ANG file for TSL at: %s", ang_output_path)
+            self._validate_exported_ang(ang_output_path, reference_path=self.in_ang_path)
             oh5_output_path = self._export_oh5_copy()
             logging.info("Exported OH5 copy at: %s", oh5_output_path)
         except Exception:
@@ -813,6 +921,89 @@ class BandWidthAutomator:
                 self.modified_data_path,
             )
             raise
+
+    def _validate_exported_ang(
+        self,
+        output_path: Path,
+        *,
+        reference_path: Optional[Path] = None,
+    ) -> None:
+        """Validate ANG dimensions, columns, rows, and Euler preservation.
+
+        Parameters:
+            output_path: Generated ANG file.
+            reference_path: Optional source ANG whose Euler columns must match.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If the ANG structure or Euler values are inconsistent.
+        """
+
+        def _parse(path: Path, *, allow_incomplete: bool = False):
+            """Parse ANG metadata and numeric rows for validation.
+
+            Parameters:
+                path: ANG file path.
+
+            Returns:
+                Tuple containing headers, dimensions, and numeric rows.
+            """
+
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
+            headers = None
+            nrows = None
+            ncols = None
+            rows = []
+            for line in lines:
+                if line.startswith("# COLUMN_HEADERS:"):
+                    headers = [value.strip() for value in line.split(":", 1)[1].split(",")]
+                elif line.startswith("# NROWS:"):
+                    nrows = int(line.split(":", 1)[1].strip())
+                elif line.startswith("# NCOLS_EVEN:"):
+                    ncols = int(line.split(":", 1)[1].strip())
+                elif line and not line.startswith("#"):
+                    rows.append([float(value) for value in line.split()])
+            if headers is None or nrows is None or ncols is None:
+                raise ValueError(f"ANG header is incomplete: {path}")
+            if len(rows) != nrows * ncols and not allow_incomplete:
+                raise ValueError(
+                    f"ANG row count {len(rows)} does not match NROWS*NCOLS_EVEN={nrows*ncols}: {path}"
+                )
+            if any(len(row) != len(headers) for row in rows):
+                raise ValueError(f"ANG data column count does not match COLUMN_HEADERS: {path}")
+            return headers, nrows, ncols, np.asarray(rows, dtype=np.float64)
+
+        headers, nrows, ncols, rows = _parse(Path(output_path))
+        if reference_path is not None and Path(reference_path).exists():
+            ref_headers, ref_nrows, ref_ncols, ref_rows = _parse(
+                Path(reference_path),
+                allow_incomplete=True,
+            )
+            if (nrows, ncols) != (ref_nrows, ref_ncols):
+                raise ValueError("Generated ANG dimensions differ from the source ANG template.")
+            normalized = [name.strip().lower() for name in headers]
+            ref_normalized = [name.strip().lower() for name in ref_headers]
+            euler_names = ("phi1", "phi", "phi2")
+            output_has_eulers = [name in normalized for name in euler_names]
+            reference_has_eulers = [name in ref_normalized for name in euler_names]
+            if any(output_has_eulers + reference_has_eulers) and not all(
+                output_has_eulers + reference_has_eulers
+            ):
+                raise ValueError("ANG output/template contains an incomplete Euler column triplet.")
+            for name in euler_names if all(output_has_eulers + reference_has_eulers) else ():
+                actual = rows[: ref_rows.shape[0], normalized.index(name)]
+                expected = ref_rows[:, ref_normalized.index(name)]
+                if not np.array_equal(actual, expected):
+                    raise ValueError(f"Generated ANG modified original Euler column '{name}'.")
+        logging.info(
+            "Validated ANG structure and original Euler preservation: %s (%d x %d, %d columns).",
+            output_path,
+            ncols,
+            nrows,
+            len(headers),
+        )
 
     def _export_oh5_copy(self) -> Path:
         """Write an OH5-named copy of the modified HDF5 output.

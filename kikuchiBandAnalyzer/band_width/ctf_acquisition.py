@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import shutil
 from typing import Any, Mapping, Optional
 
 import h5py
@@ -88,7 +89,15 @@ class CtfBandWidthAcquisition:
         try:
             patterns = self._load_pattern_stack(reader)
             modified_h5_path = self._output_dir / f"{ctf_path.stem}_modified.h5"
-            self._write_minimal_h5(reader, patterns, modified_h5_path)
+            prepared_h5 = self._config.get("prepared_h5_path")
+            if prepared_h5 and Path(str(prepared_h5)).exists():
+                shutil.copy2(Path(str(prepared_h5)), modified_h5_path)
+                self._logger.info(
+                    "Copied DA-compatible prepared HDF5 metadata to %s.",
+                    modified_h5_path,
+                )
+            else:
+                self._write_minimal_h5(reader, patterns, modified_h5_path)
             euler_angles = self._read_euler_angles(reader)
             return CtfAcquisitionResult(
                 dataset=PatternArrayDataset(patterns),

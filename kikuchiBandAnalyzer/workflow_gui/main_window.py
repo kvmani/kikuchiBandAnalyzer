@@ -10,21 +10,29 @@ from typing import Any, Optional
 
 import kikuchipy as kp
 import numpy as np
-from PySide6 import QtCore, QtGui, QtWidgets
 import yaml
 from diffsims.crystallography import ReciprocalLatticeVector
 from diffpy.structure import Atom, Lattice, Structure
+from orix import plot
 from orix.crystal_map import Phase
-from orix.quaternion import Rotation
+from orix.quaternion import Orientation, Rotation
+from orix.vector import Vector3d
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from kikuchiBandAnalyzer.automator_gui.worker import AutomatorWorker
-from kikuchiBandAnalyzer.ebsd_compare.band_data import extract_band_profile_payload
+from kikuchiBandAnalyzer.ebsd_compare.band_data import BandProfilePayload, extract_band_profile_payload
 from kikuchiBandAnalyzer.ebsd_compare.gui.band_profile_plot import BandProfilePlot
 from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import GuiLogHandler, LogEmitter, LogViewer
 from kikuchiBandAnalyzer.ebsd_compare.gui.main_window import MapPanel
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging
 from kikuchiBandAnalyzer.io.hkl_ctf_to_tsl import convert_hkl_ctf_fixture_to_tsl, parse_ctf_file
+from kikuchiBandAnalyzer.single_pattern_solver.gui import SinglePatternCanvas
+from kikuchiBandAnalyzer.single_pattern_solver.solver import (
+    SinglePatternConfig,
+    SinglePatternSolution,
+    solve_single_pattern,
+)
 from simulators import CustomKikuchiPatternSimulator
 import utilities as ut
 
@@ -43,6 +51,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         pattern_dir: Optional[Path] = None,
         ang_path: Optional[Path] = None,
         output_dir: Optional[Path] = None,
+        config_path: Optional[Path] = None,
     ) -> None:
         """Initialize the workflow GUI.
 
@@ -52,6 +61,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             pattern_dir: Optional CTF pattern directory.
             ang_path: Optional ANG path for TSL mode.
             output_dir: Optional output directory.
+            config_path: Optional workflow or single-pattern YAML configuration.
         """
 
         super().__init__()
@@ -67,10 +77,21 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._worker: Optional[AutomatorWorker] = None
         self._log_handler: Optional[GuiLogHandler] = None
         self._simulated_lines_by_index: dict[int, list[dict[str, object]]] = {}
+        self._single_solution: Optional[SinglePatternSolution] = None
+        self._map_panels: dict[str, tuple[MapPanel, MapPanel]] = {}
+        self._ipf_cache: dict[str, np.ndarray] = {}
+        self._live_render_clock = QtCore.QElapsedTimer()
+        self._live_render_clock.start()
+        self._auto_solve_timer = QtCore.QTimer(self)
+        self._auto_solve_timer.setSingleShot(True)
+        self._auto_solve_timer.setInterval(250)
+        self._auto_solve_timer.timeout.connect(self._solve_selected_pattern)
 
         self._init_ui()
         self._attach_log_handler()
         self._apply_initial_values(input_mode, source_path, pattern_dir, ang_path, output_dir)
+        if config_path is not None:
+            self.load_config(config_path)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Clean up worker and open files when the window closes.
@@ -131,6 +152,10 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
 
         input_group = QtWidgets.QGroupBox("Input")
         form = QtWidgets.QFormLayout(input_group)
+        self._config_edit = self._path_edit()
+        self._config_button = QtWidgets.QPushButton("Load")
+        self._config_button.clicked.connect(self._browse_config)
+        form.addRow("YAML", self._path_row(self._config_edit, self._config_button))
         self._mode_combo = QtWidgets.QComboBox()
         self._mode_combo.addItem("HKL/Oxford CTF + patterns", "ctf")
         self._mode_combo.addItem("TSL/EDAX OH5/H5 + ANG", "tsl")
@@ -202,6 +227,33 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         analysis_form.addRow("", self._debug_checkbox)
         layout.addWidget(analysis_group)
 
+        calibration_group = QtWidgets.QGroupBox("Selected Pattern")
+        calibration_form = QtWidgets.QFormLayout(calibration_group)
+        self._pixel_x_spin = QtWidgets.QSpinBox()
+        self._pixel_y_spin = QtWidgets.QSpinBox()
+        for spin in (self._pixel_x_spin, self._pixel_y_spin):
+            spin.setRange(0, 0)
+        self._pixel_x_spin.valueChanged.connect(self._on_pixel_controls_changed)
+        self._pixel_y_spin.valueChanged.connect(self._on_pixel_controls_changed)
+        pixel_row = QtWidgets.QWidget()
+        pixel_layout = QtWidgets.QHBoxLayout(pixel_row)
+        pixel_layout.setContentsMargins(0, 0, 0, 0)
+        pixel_layout.addWidget(QtWidgets.QLabel("X"))
+        pixel_layout.addWidget(self._pixel_x_spin)
+        pixel_layout.addWidget(QtWidgets.QLabel("Y"))
+        pixel_layout.addWidget(self._pixel_y_spin)
+        calibration_form.addRow("Pixel", pixel_row)
+        self._diagnostic_hough_checkbox = QtWidgets.QCheckBox("Use Hough-indexed diagnostic overlay")
+        self._diagnostic_hough_checkbox.setChecked(True)
+        calibration_form.addRow("", self._diagnostic_hough_checkbox)
+        self._auto_resolve_checkbox = QtWidgets.QCheckBox("Re-solve after PC drag")
+        self._auto_resolve_checkbox.setChecked(True)
+        calibration_form.addRow("", self._auto_resolve_checkbox)
+        self._solve_pixel_button = QtWidgets.QPushButton("Solve Selected Pattern")
+        self._solve_pixel_button.clicked.connect(self._solve_selected_pattern)
+        calibration_form.addRow("", self._solve_pixel_button)
+        layout.addWidget(calibration_group)
+
         self._prepare_button = QtWidgets.QPushButton("Prepare / Preview")
         self._prepare_button.clicked.connect(self.prepare_inputs)
         layout.addWidget(self._prepare_button)
@@ -210,10 +262,16 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._summary.setMaximumBlockCount(1000)
         self._summary.setPlaceholderText("Preparation summary will appear here.")
         layout.addWidget(self._summary, stretch=1)
-        return panel
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setWidget(panel)
+        scroll.setMinimumWidth(410)
+        scroll.setMaximumWidth(500)
+        return scroll
 
     def _build_visual_panel(self) -> QtWidgets.QWidget:
-        """Create map, pattern, and profile visualization widgets.
+        """Create linked map tabs and shared pattern inspection widgets.
 
         Returns:
             Configured visual widget.
@@ -223,25 +281,48 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        toolbar = QtWidgets.QHBoxLayout()
-        self._map_field_combo = QtWidgets.QComboBox()
-        self._map_field_combo.currentTextChanged.connect(self._refresh_map)
         self._cursor_label = QtWidgets.QLabel("Cursor: --")
-        toolbar.addWidget(QtWidgets.QLabel("Map"))
-        toolbar.addWidget(self._map_field_combo, stretch=1)
-        toolbar.addWidget(self._cursor_label)
-        layout.addLayout(toolbar)
+        layout.addWidget(self._cursor_label, alignment=QtCore.Qt.AlignRight)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        self._map_panel = MapPanel("EBSD Map", 2.0, 98.0)
-        self._map_panel.canvas().connect_click(self._on_map_click)
-        self._map_panel.canvas().mpl_connect("motion_notify_event", self._on_map_hover)
-        self._map_panel.connect_contrast_changed(lambda *_: self._refresh_map(False))
-        splitter.addWidget(self._map_panel)
+        self._result_tabs = QtWidgets.QTabWidget()
+        map_specs = [
+            ("IPF-X", "IPF-X"),
+            ("IPF-Y", "IPF-Y"),
+            ("IPF-Z", "IPF-Z"),
+            ("Band Width", "Band_Width"),
+            ("PSNR", "psnr"),
+            ("Validity", "band_valid"),
+            ("Strain", "strain"),
+            ("Stress", "stress"),
+        ]
+        for tab_label, field_name in map_specs:
+            tab = QtWidgets.QWidget()
+            tab_layout = QtWidgets.QHBoxLayout(tab)
+            tab_layout.setContentsMargins(0, 0, 0, 0)
+            iq_panel = MapPanel("IQ", 2.0, 98.0)
+            result_panel = MapPanel(tab_label, 2.0, 98.0)
+            for map_panel in (iq_panel, result_panel):
+                map_panel.canvas().connect_click(self._on_map_click)
+                map_panel.canvas().mpl_connect("motion_notify_event", self._on_map_hover)
+                map_panel.connect_contrast_changed(lambda *_: self._refresh_map(False))
+                tab_layout.addWidget(map_panel, stretch=1)
+            self._map_panels[field_name] = (iq_panel, result_panel)
+            self._result_tabs.addTab(tab, tab_label)
+        self._result_tabs.currentChanged.connect(lambda _index: self._refresh_map(False))
+        self._map_panel = self._map_panels["IPF-X"][1]
+        self._map_field_combo = QtWidgets.QComboBox()
+        self._map_field_combo.addItems([field for _, field in map_specs])
+        self._map_field_combo.setVisible(False)
+        splitter.addWidget(self._result_tabs)
 
-        right = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        right.setChildrenCollapsible(False)
+        inspector_tabs = QtWidgets.QTabWidget()
+        self._single_pattern_canvas = SinglePatternCanvas(self._on_pc_dragged)
+        inspector_tabs.addTab(self._single_pattern_canvas, "Diagnostic Solver")
+
+        batch_inspector = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        batch_inspector.setChildrenCollapsible(False)
         self._pattern_panel = MapPanel("Pattern + Band Overlay", 1.0, 99.0)
         self._pattern_panel.connect_contrast_changed(lambda *_: self._refresh_pattern(False))
         pattern_container = QtWidgets.QWidget()
@@ -252,7 +333,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._overlay_checkbox.stateChanged.connect(self._refresh_profile_and_overlay)
         pattern_layout.addWidget(self._pattern_panel, stretch=1)
         pattern_layout.addWidget(self._overlay_checkbox)
-        right.addWidget(pattern_container)
+        batch_inspector.addWidget(pattern_container)
         self._profile_plot = BandProfilePlot(
             title="Band Profile",
             label_a="Selected pixel",
@@ -267,10 +348,12 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         profile_layout.setContentsMargins(0, 0, 0, 0)
         profile_layout.addWidget(self._profile_plot, stretch=1)
         profile_layout.addWidget(self._metrics_label)
-        right.addWidget(profile_container)
-        right.setStretchFactor(0, 2)
-        right.setStretchFactor(1, 1)
-        splitter.addWidget(right)
+        batch_inspector.addWidget(profile_container)
+        batch_inspector.setStretchFactor(0, 2)
+        batch_inspector.setStretchFactor(1, 1)
+        inspector_tabs.addTab(batch_inspector, "Batch Result")
+        self._inspector_tabs = inspector_tabs
+        splitter.addWidget(inspector_tabs)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, stretch=1)
@@ -286,7 +369,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         panel = QtWidgets.QGroupBox("Run")
         layout = QtWidgets.QVBoxLayout(panel)
         row = QtWidgets.QHBoxLayout()
-        self._run_button = QtWidgets.QPushButton("Run Indexing + Band Width")
+        self._run_button = QtWidgets.QPushButton("Run Full Band-Width Analysis")
         self._run_button.setEnabled(False)
         self._run_button.clicked.connect(self._start_run)
         self._cancel_button = QtWidgets.QPushButton("Cancel")
@@ -406,8 +489,16 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             self._output_edit.setText(str(output_dir))
         self._on_mode_changed()
 
-    def _on_mode_changed(self) -> None:
-        """Update controls for the active input mode."""
+    def _on_mode_changed(self, _index: object = None, *, preserve_values: bool = False) -> None:
+        """Update controls for the active input mode.
+
+        Parameters:
+            _index: Optional combo-box signal payload.
+            preserve_values: Keep YAML-provided phase, lattice, and PC values.
+
+        Returns:
+            None.
+        """
 
         mode = self._current_mode()
         is_ctf = mode == "ctf"
@@ -416,6 +507,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._template_edit.setEnabled(is_ctf)
         self._ang_edit.setEnabled(not is_ctf)
         self._ang_button.setEnabled(not is_ctf)
+        if preserve_values:
+            return
         self._detector_convention_combo.setCurrentText("oxford" if is_ctf else "edax")
         if is_ctf:
             self._phase_name_edit.setText("Cr")
@@ -445,6 +538,90 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select source", filter=filt)
         if path:
             self._source_edit.setText(path)
+
+    def _browse_config(self) -> None:
+        """Browse for and load a workflow YAML configuration."""
+
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Workflow Configuration",
+            filter="YAML Files (*.yml *.yaml);;All Files (*)",
+        )
+        if path:
+            self.load_config(Path(path))
+
+    def load_config(self, path: Path) -> None:
+        """Load supported workflow or single-pattern YAML values into controls.
+
+        Parameters:
+            path: YAML configuration path.
+
+        Returns:
+            None.
+        """
+
+        config_path = Path(path)
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"Workflow configuration must be a mapping: {config_path}")
+        self._config_edit.setText(str(config_path))
+        input_cfg = dict(raw.get("input", {}) or {})
+        detector_cfg = dict(raw.get("detector", raw.get("ctf_detector", {})) or {})
+        phase_cfg = dict(raw.get("phase", raw.get("phase_list", {})) or {})
+        simulation_cfg = dict(raw.get("simulation", {}) or {})
+        profile_cfg = dict(raw.get("band_profile", {}) or {})
+
+        is_ctf = bool(raw.get("ctf_file_path")) or str(input_cfg.get("type", "")).lower() == "ctf"
+        self._mode_combo.setCurrentIndex(0 if is_ctf else 1)
+        source = raw.get("ctf_file_path") or raw.get("h5_file_path")
+        source = input_cfg.get("ctf_path" if is_ctf else "path", source)
+        if source:
+            self._source_edit.setText(str(source))
+        patterns = input_cfg.get("pattern_dir", raw.get("pattern_folder"))
+        if patterns:
+            self._pattern_edit.setText(str(patterns))
+        template = input_cfg.get("pattern_template", raw.get("pattern_template"))
+        if template:
+            self._template_edit.setText(str(template))
+        ang = raw.get("ang_file_path") or input_cfg.get("ang_path")
+        if ang:
+            self._ang_edit.setText(str(ang))
+        if raw.get("output_dir"):
+            self._output_edit.setText(str(raw["output_dir"]))
+
+        if phase_cfg:
+            self._phase_name_edit.setText(str(phase_cfg.get("name", self._phase_name_edit.text())))
+            self._space_group_spin.setValue(int(phase_cfg.get("space_group", self._space_group_spin.value())))
+            if phase_cfg.get("lattice"):
+                self._lattice_edit.setText(", ".join(str(value) for value in phase_cfg["lattice"]))
+        hkls = simulation_cfg.get("hkl_list", raw.get("hkl_list"))
+        if hkls:
+            self._hkl_list_edit.setPlainText(yaml.safe_dump(hkls, default_flow_style=True).strip())
+        desired_hkl = profile_cfg.get("desired_hkl", raw.get("desired_hkl"))
+        if desired_hkl:
+            self._desired_hkl_edit.setText(str(desired_hkl))
+        pc = detector_cfg.get("pc", raw.get("pc"))
+        if pc:
+            self._pc_edit.setText(", ".join(str(value) for value in pc))
+        self._detector_convention_combo.setCurrentText(
+            str(detector_cfg.get("convention", raw.get("detector_convention", self._detector_convention_combo.currentText())))
+        )
+        self._sample_tilt_spin.setValue(float(detector_cfg.get("sample_tilt", self._sample_tilt_spin.value())))
+        self._camera_tilt_spin.setValue(float(detector_cfg.get("tilt", self._camera_tilt_spin.value())))
+        self._azimuth_spin.setValue(float(detector_cfg.get("azimuthal", self._azimuth_spin.value())))
+        self._ref_width_spin.setValue(float(raw.get("desired_hkl_ref_width", self._ref_width_spin.value())))
+        self._modulus_spin.setValue(float(raw.get("elastic_modulus", self._modulus_spin.value())))
+        self._rect_width_spin.setValue(int(profile_cfg.get("rectWidth", raw.get("rectWidth", self._rect_width_spin.value()))))
+        self._min_psnr_spin.setValue(float(profile_cfg.get("min_psnr", raw.get("min_psnr", self._min_psnr_spin.value()))))
+        self._debug_checkbox.setChecked(bool(raw.get("debug", False)))
+        if input_cfg.get("x") is not None:
+            self._pixel_x_spin.setValue(int(input_cfg["x"]))
+        if input_cfg.get("y") is not None:
+            self._pixel_y_spin.setValue(int(input_cfg["y"]))
+        hough_cfg = dict(raw.get("hough", {}) or {})
+        self._diagnostic_hough_checkbox.setChecked(bool(hough_cfg.get("use_indexed_orientation", True)))
+        self._on_mode_changed(preserve_values=True)
+        self._logger.info("Loaded workflow configuration: %s", config_path)
 
     def _browse_pattern_dir(self) -> None:
         """Browse for CTF pattern directory."""
@@ -583,6 +760,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             "plot_band_detection": False,
             "plot_band_detection_condition": "False",
             "skip_display_EBSDmap": True,
+            "orientation_source": "original",
+            "orientation_direction": "lab2crystal",
         }
         pc = self._parse_float_list(self._pc_edit.text(), expected=3, label="PC")
         convention = self._detector_convention_combo.currentText()
@@ -593,6 +772,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
                     "pattern_folder": self._pattern_edit.text().strip(),
                     "pattern_template": self._template_edit.text().strip() or None,
                     "ctf_euler_direction": "lab2crystal",
+                    "prepared_h5_path": str(self._prepared_h5_path),
+                    "ang_template_path": str(self._prepared_ang_path),
                     "ctf_detector": {
                         "convention": convention,
                         "pc": pc,
@@ -633,9 +814,9 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
 
         text = self._output_edit.text().strip()
         if text:
-            return Path(text)
+            return Path(text).resolve()
         source = Path(self._source_edit.text().strip())
-        return source.parent / "workflow_outputs"
+        return (source.parent / "workflow_outputs").resolve()
 
     def _parse_hkl_list(self) -> list[list[int]]:
         """Parse HKL list text.
@@ -705,15 +886,6 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             raise ValueError("No prepared HDF5/OH5 path is available.")
         self._close_datasets()
         self._scan_dataset = OH5ScanFileReader.from_path(path)
-        fields = self._scan_dataset.catalog.list_scalar_fields()
-        self._map_field_combo.blockSignals(True)
-        self._map_field_combo.clear()
-        priority = ["IQ", "CI", "Fit", "Phase", "Band_Width", "psnr", "strain", "stress"]
-        ordered = [item for item in priority if item in fields] + [item for item in fields if item not in priority]
-        self._map_field_combo.addItems(ordered)
-        self._map_field_combo.blockSignals(False)
-        if ordered:
-            self._map_field_combo.setCurrentText(ordered[0])
         patterns = self._scan_dataset.catalog.list_pattern_fields()
         self._pattern_field = "Pattern" if "Pattern" in patterns else (patterns[0] if patterns else None)
         self._logger.info(
@@ -723,7 +895,10 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             self._scan_dataset.ny,
             self._pattern_field,
         )
+        self._pixel_x_spin.setRange(0, max(0, self._scan_dataset.nx - 1))
+        self._pixel_y_spin.setRange(0, max(0, self._scan_dataset.ny - 1))
         self._set_selected_pixel(self._scan_dataset.nx // 2, self._scan_dataset.ny // 2)
+        self._ipf_cache.clear()
         self._refresh_map(True)
 
     def _close_datasets(self) -> None:
@@ -751,9 +926,132 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         """
 
         self._selected_xy = (int(x), int(y))
-        self._map_panel.canvas().set_marker(int(x), int(y))
+        self._pixel_x_spin.blockSignals(True)
+        self._pixel_y_spin.blockSignals(True)
+        self._pixel_x_spin.setValue(int(x))
+        self._pixel_y_spin.setValue(int(y))
+        self._pixel_x_spin.blockSignals(False)
+        self._pixel_y_spin.blockSignals(False)
+        for iq_panel, result_panel in self._map_panels.values():
+            iq_panel.canvas().set_marker(int(x), int(y))
+            result_panel.canvas().set_marker(int(x), int(y))
         self._refresh_pattern(True)
         self._refresh_profile_and_overlay()
+
+    def _on_pixel_controls_changed(self, _value: int) -> None:
+        """Select the pixel entered in the X/Y spin boxes.
+
+        Parameters:
+            _value: Changed spin-box value.
+
+        Returns:
+            None.
+        """
+
+        if self._scan_dataset is None:
+            return
+        self._set_selected_pixel(self._pixel_x_spin.value(), self._pixel_y_spin.value())
+
+    def _on_pc_dragged(self, pcx: float, pcy: float) -> None:
+        """Update the PC edit after dragging the diagnostic marker.
+
+        Parameters:
+            pcx: Normalized detector PC X coordinate.
+            pcy: Normalized detector PC Y coordinate.
+
+        Returns:
+            None.
+        """
+
+        pc = self._parse_float_list(self._pc_edit.text(), expected=3, label="PC")
+        pc[0], pc[1] = float(pcx), float(pcy)
+        self._pc_edit.setText(", ".join(f"{value:.6f}" for value in pc))
+        self._logger.info("Updated diagnostic PC to x*=%.6f, y*=%.6f.", pcx, pcy)
+        if self._auto_resolve_checkbox.isChecked():
+            self._auto_solve_timer.start()
+
+    def _single_pattern_config(self) -> SinglePatternConfig:
+        """Build an in-memory single-pattern diagnostic configuration.
+
+        Returns:
+            Configuration using the current source, pixel, phase, and detector controls.
+        """
+
+        x = int(self._pixel_x_spin.value())
+        y = int(self._pixel_y_spin.value())
+        input_cfg: dict[str, Any]
+        if self._current_mode() == "ctf":
+            input_cfg = {
+                "type": "ctf",
+                "ctf_path": self._source_edit.text().strip(),
+                "pattern_dir": self._pattern_edit.text().strip(),
+                "pattern_template": self._template_edit.text().strip() or None,
+                "x": x,
+                "y": y,
+            }
+        else:
+            input_cfg = {
+                "type": "oh5",
+                "path": self._source_edit.text().strip(),
+                "pattern_field": self._pattern_field or "Pattern",
+                "x": x,
+                "y": y,
+            }
+        phase_name = self._phase_name_edit.text().strip() or "Ni"
+        raw = {
+            "input": input_cfg,
+            "phase": {
+                "name": phase_name,
+                "space_group": int(self._space_group_spin.value()),
+                "lattice": self._parse_lattice(),
+                "atoms": [{"element": phase_name, "position": [0, 0, 0]}],
+            },
+            "detector": {
+                "convention": self._detector_convention_combo.currentText(),
+                "pc": self._parse_float_list(self._pc_edit.text(), expected=3, label="PC"),
+                "sample_tilt": float(self._sample_tilt_spin.value()),
+                "tilt": float(self._camera_tilt_spin.value()),
+                "azimuthal": float(self._azimuth_spin.value()),
+                "px_size": 1.0,
+                "binning": 1,
+            },
+            "orientation": {"direction": "lab2crystal"},
+            "simulation": {"hkl_list": self._parse_hkl_list()},
+            "band_profile": {
+                "desired_hkl": self._desired_hkl_value(),
+                "rectWidth": int(self._rect_width_spin.value()),
+                "min_psnr": float(self._min_psnr_spin.value()),
+                "smoothing_sigma": 2.0,
+            },
+            "hough": {
+                "enabled": True,
+                "use_indexed_orientation": bool(self._diagnostic_hough_checkbox.isChecked()),
+                "n_bands": 5,
+                "t_sigma": 2,
+                "r_sigma": 2,
+            },
+        }
+        config_path = Path(self._config_edit.text().strip() or "interactive_workflow.yml")
+        return SinglePatternConfig(path=config_path, raw=raw)
+
+    def _solve_selected_pattern(self) -> None:
+        """Run the reusable single-pattern diagnostic solver and render it."""
+
+        try:
+            solution = solve_single_pattern(self._single_pattern_config(), logger=self._logger)
+            self._single_solution = solution
+            self._single_pattern_canvas.update_solution(solution)
+            self._inspector_tabs.setCurrentIndex(0)
+            summary = solution.hough_summary or {}
+            self._logger.info(
+                "Diagnostic solve x=%d y=%d; Hough success=%s; exported orientations remain unchanged.",
+                solution.x,
+                solution.y,
+                summary.get("success", False),
+            )
+        except Exception as exc:
+            self._logger.exception("Selected-pattern diagnostic solve failed: %s", exc)
+            QtWidgets.QMessageBox.critical(self, "Diagnostic solve failed", str(exc))
 
     def _on_map_click(self, event: Any) -> None:
         """Select a pixel from a map click.
@@ -789,7 +1087,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             self._cursor_label.setText(f"Cursor: {event.xdata:.1f}, {event.ydata:.1f}")
 
     def _refresh_map(self, reset_view: bool = True) -> None:
-        """Refresh the selected scalar map.
+        """Refresh every linked IQ/result map tab.
 
         Parameters:
             reset_view: Whether to reset axes limits.
@@ -800,14 +1098,54 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
 
         dataset = self._output_dataset or self._scan_dataset
         if dataset is None:
-            self._map_panel.canvas().update_data(np.zeros((2, 2), dtype=np.float32), reset_view=True)
+            for iq_panel, result_panel in self._map_panels.values():
+                iq_panel.canvas().update_data(np.zeros((2, 2), dtype=np.float32), reset_view=True)
+                result_panel.canvas().update_data(np.zeros((2, 2), dtype=np.float32), reset_view=True)
             return
-        field = self._map_field_combo.currentText()
-        if not field:
+        try:
+            iq = dataset.get_map("IQ")
+        except Exception:
+            iq = np.zeros((dataset.ny, dataset.nx), dtype=np.float32)
+        for field, (iq_panel, result_panel) in self._map_panels.items():
+            self._update_map_panel(iq_panel, iq, cmap="gray", reset_view=reset_view)
+            try:
+                data = self._ipf_map(field) if field.startswith("IPF-") else dataset.get_map(field)
+            except Exception:
+                data = np.zeros((dataset.ny, dataset.nx), dtype=np.float32)
+            cmap = "viridis" if field not in {"band_valid"} and not field.startswith("IPF-") else "gray"
+            self._update_map_panel(result_panel, data, cmap=cmap, reset_view=reset_view)
+        if self._selected_xy is not None:
+            x, y = self._selected_xy
+            for iq_panel, result_panel in self._map_panels.values():
+                iq_panel.canvas().set_marker(x, y)
+                result_panel.canvas().set_marker(x, y)
+
+    def _update_map_panel(
+        self,
+        panel: MapPanel,
+        data: np.ndarray,
+        *,
+        cmap: str,
+        reset_view: bool,
+    ) -> None:
+        """Display scalar or RGB data with appropriate contrast handling.
+
+        Parameters:
+            panel: Destination map panel.
+            data: Scalar or RGB map array.
+            cmap: Matplotlib colormap for scalar data.
+            reset_view: Whether axes limits should be reset.
+
+        Returns:
+            None.
+        """
+
+        array = np.asarray(data)
+        if array.ndim == 3 and array.shape[-1] in {3, 4}:
+            panel.canvas().update_data(array, reset_view=reset_view)
             return
-        data = dataset.get_map(field)
-        low, high = self._map_panel.contrast_values()
-        finite = data[np.isfinite(data)]
+        low, high = panel.contrast_values()
+        finite = array[np.isfinite(array)]
         if finite.size:
             vmin = float(np.percentile(finite, low))
             vmax = float(np.percentile(finite, high))
@@ -815,7 +1153,40 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
                 vmax = vmin + 1.0
         else:
             vmin, vmax = 0.0, 1.0
-        self._map_panel.canvas().update_data(data, cmap="gray", vmin=vmin, vmax=vmax, reset_view=reset_view)
+        panel.canvas().update_data(array, cmap=cmap, vmin=vmin, vmax=vmax, reset_view=reset_view)
+
+    def _ipf_map(self, field: str) -> np.ndarray:
+        """Return an IPF RGB map computed from original acquisition Euler angles.
+
+        Parameters:
+            field: One of ``IPF-X``, ``IPF-Y``, or ``IPF-Z``.
+
+        Returns:
+            RGB map shaped ``(ny, nx, 3)``.
+        """
+
+        if field in self._ipf_cache:
+            return self._ipf_cache[field]
+        dataset = self._output_dataset or self._scan_dataset
+        if dataset is None:
+            raise RuntimeError("No scan is loaded.")
+        eulers = self._read_preview_eulers()
+        phase = self._build_phase()
+        orientations = Orientation.from_euler(
+            eulers,
+            symmetry=phase.point_group,
+            direction="lab2crystal",
+            degrees=False,
+        )
+        directions = {
+            "IPF-X": Vector3d.xvector(),
+            "IPF-Y": Vector3d.yvector(),
+            "IPF-Z": Vector3d.zvector(),
+        }
+        rgb = plot.IPFColorKeyTSL(phase.point_group, directions[field]).orientation2color(orientations)
+        result = np.asarray(rgb).reshape(dataset.ny, dataset.nx, 3)
+        self._ipf_cache[field] = result
+        return result
 
     def _refresh_pattern(self, reset_view: bool = True) -> None:
         """Refresh the selected pattern image.
@@ -1164,6 +1535,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         worker.stage_changed.connect(self._on_worker_stage)
         worker.progress_changed.connect(self._on_worker_progress)
         worker.pixel_changed.connect(self._on_worker_pixel)
+        worker.pixel_result.connect(self._on_worker_pixel_result)
         worker.finished_success.connect(self._on_worker_finished)
         worker.cancelled.connect(self._on_worker_cancelled)
         worker.failed.connect(self._on_worker_failed)
@@ -1199,7 +1571,58 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         """Update live current-pixel marker from worker signal."""
 
         self._pixel_label.setText(f"Pixel: X={x}, Y={y}")
-        self._map_panel.canvas().set_secondary_marker(x, y, color="#ff0000")
+        for iq_panel, result_panel in self._map_panels.values():
+            iq_panel.canvas().set_secondary_marker(x, y, color="#ff0000")
+            result_panel.canvas().set_secondary_marker(x, y, color="#ff0000")
+
+    def _on_worker_pixel_result(self, payload: object) -> None:
+        """Render a throttled live pattern, overlay, and profile during a scan.
+
+        Parameters:
+            payload: Worker dictionary containing pattern, annotations, and result entry.
+
+        Returns:
+            None.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        if self._live_render_clock.elapsed() < 200 and int(payload.get("processed", 0)) > 1:
+            return
+        self._live_render_clock.restart()
+        pattern = np.asarray(payload.get("pattern"), dtype=np.float32)
+        if pattern.ndim != 2:
+            return
+        finite = pattern[np.isfinite(pattern)]
+        vmin, vmax = (float(np.percentile(finite, 1)), float(np.percentile(finite, 99))) if finite.size else (0.0, 1.0)
+        self._pattern_panel.canvas().update_data(pattern, cmap="gray", vmin=vmin, vmax=vmax, reset_view=True)
+        annotations = payload.get("annotations", {})
+        lines = list(annotations.get("points", [])) if isinstance(annotations, dict) else []
+        if lines:
+            self._pattern_panel.canvas().set_overlay_lines(
+                self._prepare_overlay_labels(lines),
+                color="#00e676",
+                linewidth=1.8,
+                show_labels=True,
+            )
+        entry = payload.get("entry", {})
+        bands = entry.get("bands", []) if isinstance(entry, dict) else []
+        valid = [band for band in bands if band.get("band_valid")]
+        if valid:
+            best = max(valid, key=lambda band: float(band.get("psnr", 0.0)))
+            profile = np.asarray(best.get("band_profile"), dtype=np.float32)
+            central_line = np.asarray(best.get("central_line"), dtype=np.float32)
+            profile_payload = BandProfilePayload(
+                profile=profile,
+                central_line=central_line,
+                band_start_idx=int(best.get("band_start_idx", best.get("bandStart", -1))),
+                central_peak_idx=int(best.get("central_peak_idx", best.get("centralPeak", -1))),
+                band_end_idx=int(best.get("band_end_idx", best.get("bandEnd", -1))),
+                profile_length=int(best.get("profile_length", profile.size)),
+                band_valid=True,
+            )
+            self._profile_plot.update_plot(profile_payload, None, normalize=True, show_markers=True)
+        self._inspector_tabs.setCurrentIndex(1)
 
     def _on_worker_finished(self, output_path: str, summary: object) -> None:
         """Load completed output and refresh GUI.
@@ -1221,14 +1644,41 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         if self._output_dataset is not None:
             self._output_dataset.close()
         self._output_dataset = OH5ScanFileReader.from_path(Path(output_path))
-        fields = self._output_dataset.catalog.list_scalar_fields()
-        self._map_field_combo.clear()
-        priority = ["Band_Width", "psnr", "band_valid", "strain", "stress", "IQ", "CI"]
-        self._map_field_combo.addItems([f for f in priority if f in fields] + [f for f in fields if f not in priority])
+        self._ipf_cache.clear()
         self._refresh_map(True)
         self._refresh_pattern(True)
         self._refresh_profile_and_overlay()
+        self._export_map_images(Path(output_path))
         self._summary.appendPlainText(f"\nAnalysis complete.\n{summary}")
+
+    def _export_map_images(self, output_path: Path) -> None:
+        """Export rendered IQ and result map tabs as PNG images.
+
+        Parameters:
+            output_path: Completed modified HDF5 path used to derive file names.
+
+        Returns:
+            None.
+        """
+
+        destination = Path(output_path).parent
+        base_name = Path(output_path).stem
+        exported_iq = False
+        for field, (iq_panel, result_panel) in self._map_panels.items():
+            safe_field = field.lower().replace("-", "_").replace(" ", "_")
+            if not exported_iq:
+                iq_panel.canvas().figure.savefig(
+                    destination / f"{base_name}_iq_map.png",
+                    dpi=150,
+                    bbox_inches="tight",
+                )
+                exported_iq = True
+            result_panel.canvas().figure.savefig(
+                destination / f"{base_name}_{safe_field}_map.png",
+                dpi=150,
+                bbox_inches="tight",
+            )
+        self._logger.info("Exported IQ and result map PNG files to %s.", destination)
 
     def _on_worker_cancelled(self, message: str) -> None:
         """Handle worker cancellation."""
@@ -1275,6 +1725,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """
 
     parser = argparse.ArgumentParser(description="Run the Kikuchi workflow GUI.")
+    parser.add_argument("--config", type=Path, help="Optional workflow or single-pattern YAML file.")
     parser.add_argument("--mode", choices=["ctf", "tsl"], default="ctf")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--patterns", type=Path)
@@ -1295,6 +1746,7 @@ def main() -> None:
         pattern_dir=args.patterns,
         ang_path=args.ang,
         output_dir=args.output_dir,
+        config_path=args.config,
     )
     window.show()
     app.exec()

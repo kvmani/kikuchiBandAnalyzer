@@ -70,6 +70,9 @@ logging.basicConfig(
 # ──────────────────────────────────────────────────────────────────────────────
 class BandDetector:
     """Detect band widths for a single Kikuchi pattern."""
+
+    _fallback_warning_emitted = False
+
     def __init__(self, image=None, image_path=None, points=None,
                  desired_hkl="1,1,1", config=None, phase = None):
         """Initialise the detector with either an image array or path."""
@@ -144,12 +147,41 @@ class BandDetector:
 
     # ─────────────────────────────────── internals
     def _detect_band(self, central_line, hkl):
-        """Run a detection strategy on a single band."""
-        detector = RectangularAreaBandDetector(self.image,
-                                               central_line,
-                                               self.config,
-                                               hkl)
-        return detector.detect()
+        """Run the production detector with a SciPy fallback.
+
+        Parameters:
+            central_line: Simulated band center-line coordinates.
+            hkl: Reflector identifier for the candidate band.
+
+        Returns:
+            Band detection result dictionary.
+        """
+
+        detector = RectangularAreaBandDetector(
+            self.image,
+            central_line,
+            self.config,
+            hkl,
+        )
+        try:
+            return detector.detect()
+        except ModuleNotFoundError as exc:
+            from kikuchiBandAnalyzer.single_pattern_solver.solver import (
+                detect_profile_without_opencv,
+            )
+
+            if not BandDetector._fallback_warning_emitted:
+                logging.warning(
+                    "OpenCV is unavailable; using the SciPy band-profile fallback "
+                    "for this batch. Install requirements.txt to restore the OpenCV detector."
+                )
+                BandDetector._fallback_warning_emitted = True
+            logging.debug("SciPy fallback for reflector %s: %s", hkl, exc)
+            return detect_profile_without_opencv(
+                self.image,
+                {"central_line": central_line},
+                self.config,
+            )
 
 
 class KikuchiBatchProcessor:

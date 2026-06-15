@@ -380,7 +380,11 @@ class MapCanvas(FigureCanvas):
                     fraction = min(0.95, max(0.05, fraction))
                     label_x = x1 + fraction * (x2 - x1)
                     label_y = y1 + fraction * (y2 - y1)
-                    angle = float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                    angle = -float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                    if angle > 90.0:
+                        angle -= 180.0
+                    elif angle < -90.0:
+                        angle += 180.0
                     text_artist = self._axes.text(
                         label_x,
                         label_y,
@@ -582,7 +586,7 @@ class MapPanel(QtWidgets.QWidget):
         self._canvas = MapCanvas(title)
         self._canvas.set_title(title, fontsize=8.5, pad=1.5)
         self._toolbar = CompactNavigationToolbar(self._canvas, self)
-        self._toolbar.setOrientation(QtCore.Qt.Vertical)
+        self._toolbar.setOrientation(QtCore.Qt.Horizontal)
         self._toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
         self._toolbar.setIconSize(QtCore.QSize(14, 14))
         self._low_spin = QtWidgets.QDoubleSpinBox()
@@ -590,14 +594,14 @@ class MapPanel(QtWidgets.QWidget):
         self._low_spin.setDecimals(1)
         self._low_spin.setSingleStep(0.5)
         self._low_spin.setValue(default_low)
-        self._low_spin.setFixedWidth(58)
+        self._low_spin.setFixedWidth(54)
         self._low_spin.setAlignment(QtCore.Qt.AlignRight)
         self._high_spin = QtWidgets.QDoubleSpinBox()
         self._high_spin.setRange(0.0, 100.0)
         self._high_spin.setDecimals(1)
         self._high_spin.setSingleStep(0.5)
         self._high_spin.setValue(default_high)
-        self._high_spin.setFixedWidth(58)
+        self._high_spin.setFixedWidth(54)
         self._high_spin.setAlignment(QtCore.Qt.AlignRight)
         self._low_spin.setToolTip(
             f"Low percentile for contrast (0-100). Default: {default_low}. Example: 2.0."
@@ -621,7 +625,7 @@ class MapPanel(QtWidgets.QWidget):
         overlay.setSizePolicy(
             QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed
         )
-        overlay_layout = QtWidgets.QVBoxLayout(overlay)
+        overlay_layout = QtWidgets.QHBoxLayout(overlay)
         overlay_layout.setContentsMargins(4, 4, 4, 4)
         overlay_layout.setSpacing(2)
         overlay_layout.setSizeConstraint(QtWidgets.QLayout.SetFixedSize)

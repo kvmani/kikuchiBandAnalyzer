@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import traceback
@@ -21,6 +22,7 @@ class AutomatorWorker(QtCore.QThread):
         stage_changed: Emits (stage_name, stage_index, stage_count).
         progress_changed: Emits (processed_count, total_count, eta_seconds).
         pixel_changed: Emits (x, y, processed_count).
+        pixel_result: Emits a reusable live-view payload for a completed pixel.
         finished_success: Emits (output_path, summary_dict).
         cancelled: Emits cancellation message.
         failed: Emits error message with stack trace.
@@ -29,6 +31,7 @@ class AutomatorWorker(QtCore.QThread):
     stage_changed = QtCore.Signal(str, int, int)
     progress_changed = QtCore.Signal(int, int, float)
     pixel_changed = QtCore.Signal(int, int, int)
+    pixel_result = QtCore.Signal(object)
     finished_success = QtCore.Signal(str, object)
     cancelled = QtCore.Signal(str)
     failed = QtCore.Signal(str)
@@ -61,7 +64,7 @@ class AutomatorWorker(QtCore.QThread):
 
         stages = [
             "Load/Validate",
-            "Indexing (kikuchipy)",
+            "Original-orientation simulation",
             "Band detection/profiles",
             "Write outputs",
         ]
@@ -81,6 +84,22 @@ class AutomatorWorker(QtCore.QThread):
                 self.progress_changed.emit(processed, total, float(eta))
                 last_emit = now
             self.pixel_changed.emit(int(col), int(row), int(processed))
+            try:
+                pattern = automator.dataset.data[int(row), int(col)]
+                pixel_index = int(row) * int(automator.dataset.data.shape[1]) + int(col)
+                annotations = automator.grouped_dict_list[pixel_index]
+                self.pixel_result.emit(
+                    {
+                        "x": int(col),
+                        "y": int(row),
+                        "processed": int(processed),
+                        "pattern": pattern,
+                        "annotations": annotations,
+                        "entry": entry,
+                    }
+                )
+            except Exception:
+                self._logger.debug("Live pixel payload unavailable.", exc_info=True)
 
         try:
             self.stage_changed.emit(stages[0], 1, stage_count)
@@ -116,6 +135,11 @@ class AutomatorWorker(QtCore.QThread):
             automator.export_results(processed)
 
             summary = self._summarize(automator, processed)
+            summary_path = Path(automator.modified_data_path).with_name(
+                f"{automator.base_name}_run_summary.json"
+            )
+            summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            self._logger.info("Wrote run summary: %s", summary_path)
             self.finished_success.emit(str(automator.modified_data_path), summary)
         except ProcessingCancelled as exc:
             self._logger.info("Processing cancelled: %s", exc)
@@ -175,5 +199,6 @@ class AutomatorWorker(QtCore.QThread):
             "n_valid": int(n_valid),
             "bandwidth": _stats(bandwidths),
             "psnr": _stats(psnrs),
+            "orientation_policy": "original acquisition Euler angles preserved",
         }
 
