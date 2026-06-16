@@ -117,7 +117,15 @@ class BandWidthAutomator:
         logging.info(f"Loading dataset from: {path}")
         self.dataset = kp.load(path, lazy=False)
 
-        if self.config.get("debug", False):
+        if self.config.get("debug", False) and str(
+            self.config.get("orientation_source", "original")
+        ).lower() == "original":
+            logging.info(
+                "Debug mode is enabled, but dataset cropping is skipped because "
+                "orientation_source=original requires the pattern grid to stay aligned "
+                "with the original HDF5 Euler/scalar arrays."
+            )
+        elif self.config.get("debug", False):
             crop_start = self.config.get("crop_start", 5)
             crop_end = self.config.get("crop_end", 25)
             logging.info("Debug mode enabled: Cropping data for faster processing.")

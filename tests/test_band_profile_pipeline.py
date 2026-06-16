@@ -132,6 +132,64 @@ def test_prepare_json_input_handles_optional_pattern_path(tmp_path) -> None:
     assert "pattern_path" not in results[1]
 
 
+def test_debug_mode_does_not_crop_original_orientation_grid(tmp_path, monkeypatch) -> None:
+    """Keep patterns aligned with original Euler arrays in production mode."""
+
+    h5_path = tmp_path / "scan.h5"
+    _create_min_h5(h5_path, "Scan", 42)
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "h5_file_path: " + str(h5_path),
+                "output_dir: " + str(tmp_path),
+                "debug: true",
+                "orientation_source: original",
+                "desired_hkl_ref_width: 1.0",
+                "elastic_modulus: 1.0",
+                "desired_hkl: 111",
+                "rectWidth: 2",
+                "phase_list:",
+                "  name: Ni",
+                "  space_group: 225",
+                "  lattice: [1, 1, 1, 90, 90, 90]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeSignal:
+        """Minimal kikuchipy-like signal recording crop calls."""
+
+        def __init__(self) -> None:
+            """Initialize the fake signal."""
+
+            self.data = np.zeros((7, 6, 1, 1), dtype=np.float32)
+            self.crop_calls: list[tuple[int, int, int]] = []
+
+        def crop(self, axis: int, start: int, end: int) -> None:
+            """Record crop calls made by the automator.
+
+            Parameters:
+                axis: Navigation axis.
+                start: Crop start index.
+                end: Crop end index.
+
+            Returns:
+                None.
+            """
+
+            self.crop_calls.append((axis, start, end))
+
+    fake_signal = _FakeSignal()
+    monkeypatch.setattr("KikuchiBandWidthAutomator.kp.load", lambda *_args, **_kwargs: fake_signal)
+
+    automator = BandWidthAutomator(config_path=str(config_path))
+    automator.prepare_dataset()
+
+    assert fake_signal.crop_calls == []
+
+
 def test_batch_processor_preserves_pattern_path(monkeypatch) -> None:
     """Ensure process_kikuchi_image_at_pixel passes through pattern_path."""
     ebsd_data = np.zeros((1, 1, 4, 4), dtype=np.float32)
