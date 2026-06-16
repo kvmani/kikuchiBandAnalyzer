@@ -39,7 +39,7 @@ Launch the unified application with an optional editable configuration:
 python -m kikuchiBandAnalyzer.workflow_gui --config configs\unified_workflow_da.yml
 ```
 
-See [`docs/unified_workflow_gui.md`](docs/unified_workflow_gui.md) for the complete workflow and orientation-preservation policy.
+See [`docs/unified_workflow_gui.md`](docs/unified_workflow_gui.md) for a beginner-friendly guide covering the GUI objective, required inputs, full-scan run steps, result inspection, outputs, and the orientation-preservation policy.
 
 ## Single Pattern Solver
 
