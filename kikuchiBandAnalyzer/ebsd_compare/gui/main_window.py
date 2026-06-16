@@ -260,7 +260,7 @@ class MapCanvas(FigureCanvas):
 
         self._marker_coords = None
         if self._marker_artist is not None:
-            self._marker_artist.remove()
+            self._remove_artist(self._marker_artist)
             self._marker_artist = None
             self.draw_idle()
 
@@ -284,7 +284,7 @@ class MapCanvas(FigureCanvas):
 
         self._secondary_marker_coords = None
         if self._secondary_marker_artist is not None:
-            self._secondary_marker_artist.remove()
+            self._remove_artist(self._secondary_marker_artist)
             self._secondary_marker_artist = None
             self.draw_idle()
 
@@ -319,7 +319,7 @@ class MapCanvas(FigureCanvas):
 
         self._overlay_line_coords = None
         if self._overlay_line_artist is not None:
-            self._overlay_line_artist.remove()
+            self._remove_artist(self._overlay_line_artist)
             self._overlay_line_artist = None
         self._clear_overlay_line_artists()
         self.draw_idle()
@@ -346,7 +346,7 @@ class MapCanvas(FigureCanvas):
 
         self._overlay_line_coords = None
         if self._overlay_line_artist is not None:
-            self._overlay_line_artist.remove()
+            self._remove_artist(self._overlay_line_artist)
             self._overlay_line_artist = None
         self._clear_overlay_line_artists()
         if self._image is None:
@@ -362,12 +362,16 @@ class MapCanvas(FigureCanvas):
                 continue
             x1, y1, x2, y2 = clipped
             line_color = str(line_data.get("color", color))
+            line_width = float(line_data.get("linewidth", linewidth))
+            line_style = str(line_data.get("linestyle", "-"))
+            line_alpha = float(line_data.get("alpha", 0.9))
             (line_artist,) = self._axes.plot(
                 [x1, x2],
                 [y1, y2],
                 color=line_color,
-                linewidth=linewidth,
-                alpha=0.9,
+                linewidth=line_width,
+                linestyle=line_style,
+                alpha=line_alpha,
                 zorder=5,
                 clip_on=True,
             )
@@ -380,7 +384,16 @@ class MapCanvas(FigureCanvas):
                     fraction = min(0.95, max(0.05, fraction))
                     label_x = x1 + fraction * (x2 - x1)
                     label_y = y1 + fraction * (y2 - y1)
-                    angle = -float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                    start_display = self._axes.transData.transform((x1, y1))
+                    end_display = self._axes.transData.transform((x2, y2))
+                    angle = float(
+                        np.degrees(
+                            np.arctan2(
+                                end_display[1] - start_display[1],
+                                end_display[0] - start_display[0],
+                            )
+                        )
+                    )
                     if angle > 90.0:
                         angle -= 180.0
                     elif angle < -90.0:
@@ -409,11 +422,23 @@ class MapCanvas(FigureCanvas):
         """Remove all multi-line overlay artists."""
 
         for artist in self._overlay_line_artists:
-            try:
-                artist.remove()
-            except ValueError:
-                pass
+            self._remove_artist(artist)
         self._overlay_line_artists = []
+
+    def _remove_artist(self, artist: object) -> None:
+        """Remove a Matplotlib artist when the backend supports removal.
+
+        Parameters:
+            artist: Matplotlib artist-like object to remove.
+
+        Returns:
+            None.
+        """
+
+        try:
+            artist.remove()
+        except (ValueError, RuntimeError, NotImplementedError, AttributeError):
+            pass
 
     def _clip_segment_to_image(
         self,
@@ -475,7 +500,7 @@ class MapCanvas(FigureCanvas):
         if self._marker_coords is None:
             return
         if self._marker_artist is not None:
-            self._marker_artist.remove()
+            self._remove_artist(self._marker_artist)
         x, y = self._marker_coords
         self._marker_artist = self._axes.scatter(
             [x],
@@ -493,7 +518,7 @@ class MapCanvas(FigureCanvas):
         if self._secondary_marker_coords is None:
             return
         if self._secondary_marker_artist is not None:
-            self._secondary_marker_artist.remove()
+            self._remove_artist(self._secondary_marker_artist)
         x, y = self._secondary_marker_coords
         self._secondary_marker_artist = self._axes.scatter(
             [x],
@@ -512,7 +537,7 @@ class MapCanvas(FigureCanvas):
         if self._overlay_line_coords is None:
             return
         if self._overlay_line_artist is not None:
-            self._overlay_line_artist.remove()
+            self._remove_artist(self._overlay_line_artist)
         x1, y1, x2, y2 = self._overlay_line_coords
         (artist,) = self._axes.plot(
             [x1, x2],
@@ -531,7 +556,7 @@ class MapCanvas(FigureCanvas):
             return
         if not self._overlay_line_visible or self._overlay_line_coords is None:
             if self._overlay_line_artist is not None:
-                self._overlay_line_artist.remove()
+                self._remove_artist(self._overlay_line_artist)
                 self._overlay_line_artist = None
                 self.draw_idle()
             return

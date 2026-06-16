@@ -937,6 +937,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             result_panel.canvas().set_marker(int(x), int(y))
         self._refresh_pattern(True)
         self._refresh_profile_and_overlay()
+        self._inspector_tabs.setCurrentIndex(1)
 
     def _on_pixel_controls_changed(self, _value: int) -> None:
         """Select the pixel entered in the X/Y spin boxes.
@@ -1214,7 +1215,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             vmax = vmin + 1.0
         self._pattern_panel.canvas().update_data(pattern, cmap="gray", vmin=vmin, vmax=vmax, reset_view=reset_view)
         if self._overlay_checkbox.isChecked():
-            self._draw_simulated_lines_for_selected_pixel()
+            self._apply_selected_pattern_overlay()
 
     def _refresh_profile_and_overlay(self) -> None:
         """Refresh band profile and overlay from output datasets."""
@@ -1226,25 +1227,66 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         if dataset is None or "band_profile" not in dataset.catalog.vectors:
             self._profile_plot.clear("Run analysis to populate band_profile.")
             if self._overlay_checkbox.isChecked():
-                self._draw_simulated_lines_for_selected_pixel()
+                self._apply_selected_pattern_overlay()
             else:
                 self._pattern_panel.canvas().clear_overlay_line()
             self._metrics_label.setText("Band metrics: not available")
             return
         payload = extract_band_profile_payload(dataset, x, y, logger=self._logger)
-        if payload.profile is None or not payload.band_valid:
-            self._profile_plot.clear("No valid band at this pixel.")
-            self._pattern_panel.canvas().clear_overlay_line()
-            self._metrics_label.setText("Band metrics: no valid band")
+        if payload.profile is None or not np.isfinite(payload.profile).any():
+            self._profile_plot.clear("No finite band profile at this pixel.")
+            if self._overlay_checkbox.isChecked():
+                self._apply_selected_pattern_overlay()
+            else:
+                self._pattern_panel.canvas().clear_overlay_line()
+            self._metrics_label.setText("Band metrics: no finite profile")
             return
         self._profile_plot.update_plot(payload, None, normalize=True, show_markers=True)
-        if self._overlay_checkbox.isChecked() and payload.central_line is not None:
-            line = np.asarray(payload.central_line, dtype=np.float32).ravel()
-            if line.size >= 4 and np.isfinite(line[:4]).all():
-                self._pattern_panel.canvas().set_overlay_line(float(line[0]), float(line[1]), float(line[2]), float(line[3]))
+        if self._overlay_checkbox.isChecked():
+            self._apply_selected_pattern_overlay(payload)
         else:
             self._pattern_panel.canvas().clear_overlay_line()
-        self._metrics_label.setText(self._metrics_text(dataset, x, y))
+        metrics = self._metrics_text(dataset, x, y)
+        if not payload.band_valid:
+            metrics += " (selected profile is marked invalid)"
+        self._metrics_label.setText(metrics)
+
+    def _apply_selected_pattern_overlay(
+        self,
+        payload: Optional[BandProfilePayload] = None,
+    ) -> None:
+        """Render simulated lines and the selected measured profile line together.
+
+        Parameters:
+            payload: Optional selected-pixel band profile payload.
+
+        Returns:
+            None.
+        """
+
+        canvas = self._pattern_panel.canvas()
+        if not self._overlay_checkbox.isChecked():
+            canvas.clear_overlay_line()
+            return
+        lines = self._selected_simulated_lines()
+        if payload is not None and payload.central_line is not None:
+            central_line = np.asarray(payload.central_line, dtype=np.float32).ravel()
+            if central_line.size >= 4 and np.isfinite(central_line[:4]).all():
+                lines.append(
+                    {
+                        "hkl": f"Profile {{{self._desired_hkl_value()}}}",
+                        "central_line": central_line[:4].tolist(),
+                        "color": "#ffeb3b",
+                        "linewidth": 4.0,
+                        "show_label": True,
+                        "label_fraction": 0.42,
+                        "alpha": 0.95,
+                    }
+                )
+        if lines and hasattr(canvas, "set_overlay_lines"):
+            canvas.set_overlay_lines(lines, color="#00e676", linewidth=1.8, show_labels=True)
+        else:
+            canvas.clear_overlay_line()
 
     def _simulate_preview_lines(self) -> None:
         """Simulate solved-orientation Kikuchi lines for the prepared preview data.
@@ -1460,20 +1502,29 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             None.
         """
 
+        lines = self._selected_simulated_lines()
+        canvas = self._pattern_panel.canvas()
+        if lines and hasattr(canvas, "set_overlay_lines"):
+            canvas.set_overlay_lines(lines, color="#00e676", linewidth=1.8, show_labels=True)
+        else:
+            canvas.clear_overlay_line()
+
+    def _selected_simulated_lines(self) -> list[dict[str, object]]:
+        """Return display-ready simulated lines for the selected pixel.
+
+        Returns:
+            List of overlay line dictionaries.
+        """
+
         if self._selected_xy is None:
-            return
+            return []
         dataset = self._output_dataset or self._scan_dataset
         if dataset is None:
-            return
+            return []
         x, y = self._selected_xy
         pixel_index = int(y) * int(dataset.nx) + int(x)
         lines = self._simulated_lines_by_index.get(pixel_index, [])
-        canvas = self._pattern_panel.canvas()
-        if lines and hasattr(canvas, "set_overlay_lines"):
-            display_lines = self._prepare_overlay_labels(lines)
-            canvas.set_overlay_lines(display_lines, color="#00e676", linewidth=1.8, show_labels=True)
-        else:
-            canvas.clear_overlay_line()
+        return self._prepare_overlay_labels(lines) if lines else []
 
     def _prepare_overlay_labels(
         self,
@@ -1607,9 +1658,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             )
         entry = payload.get("entry", {})
         bands = entry.get("bands", []) if isinstance(entry, dict) else []
-        valid = [band for band in bands if band.get("band_valid")]
-        if valid:
-            best = max(valid, key=lambda band: float(band.get("psnr", 0.0)))
+        best = self._select_display_band(bands)
+        if best is not None:
             profile = np.asarray(best.get("band_profile"), dtype=np.float32)
             central_line = np.asarray(best.get("central_line"), dtype=np.float32)
             profile_payload = BandProfilePayload(
@@ -1619,10 +1669,35 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
                 central_peak_idx=int(best.get("central_peak_idx", best.get("centralPeak", -1))),
                 band_end_idx=int(best.get("band_end_idx", best.get("bandEnd", -1))),
                 profile_length=int(best.get("profile_length", profile.size)),
-                band_valid=True,
+                band_valid=bool(best.get("band_valid")),
             )
             self._profile_plot.update_plot(profile_payload, None, normalize=True, show_markers=True)
         self._inspector_tabs.setCurrentIndex(1)
+
+    def _select_display_band(self, bands: object) -> Optional[dict[str, object]]:
+        """Choose the most useful band dictionary for GUI display.
+
+        Parameters:
+            bands: Sequence-like object from the batch processor result.
+
+        Returns:
+            Band dictionary with a finite profile, or ``None`` when unavailable.
+        """
+
+        if not isinstance(bands, list):
+            return None
+        candidates: list[dict[str, object]] = []
+        for band in bands:
+            if not isinstance(band, dict):
+                continue
+            profile = np.asarray(band.get("band_profile"), dtype=np.float32).ravel()
+            if profile.size and np.isfinite(profile).any():
+                candidates.append(band)
+        if not candidates:
+            return None
+        valid = [band for band in candidates if band.get("band_valid")]
+        ranked = valid or candidates
+        return max(ranked, key=lambda band: float(band.get("psnr", 0.0) or 0.0))
 
     def _on_worker_finished(self, output_path: str, summary: object) -> None:
         """Load completed output and refresh GUI.
@@ -1644,6 +1719,9 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         if self._output_dataset is not None:
             self._output_dataset.close()
         self._output_dataset = OH5ScanFileReader.from_path(Path(output_path))
+        patterns = self._output_dataset.catalog.list_pattern_fields()
+        if patterns:
+            self._pattern_field = "Pattern" if "Pattern" in patterns else patterns[0]
         self._ipf_cache.clear()
         self._refresh_map(True)
         self._refresh_pattern(True)
