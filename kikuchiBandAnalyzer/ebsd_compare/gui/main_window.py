@@ -173,9 +173,10 @@ class MapCanvas(FigureCanvas):
     def update_data(
         self,
         data: np.ndarray,
-        cmap: str = "gray",
+        cmap: object = "gray",
         vmin: Optional[float] = None,
         vmax: Optional[float] = None,
+        norm: Optional[object] = None,
         reset_view: bool = False,
     ) -> None:
         """Update the displayed data.
@@ -185,6 +186,7 @@ class MapCanvas(FigureCanvas):
             cmap: Matplotlib colormap name.
             vmin: Optional lower bound for color scaling.
             vmax: Optional upper bound for color scaling.
+            norm: Optional Matplotlib normalization object.
             reset_view: Whether to reset the axes view.
         """
 
@@ -197,7 +199,12 @@ class MapCanvas(FigureCanvas):
             self._apply_title()
             self._axes.set_xticks([])
             self._axes.set_yticks([])
-            self._image = self._axes.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax)
+            image_kwargs = {"cmap": cmap}
+            if norm is not None:
+                image_kwargs["norm"] = norm
+            else:
+                image_kwargs.update({"vmin": vmin, "vmax": vmax})
+            self._image = self._axes.imshow(data, **image_kwargs)
             self._marker_artist = None
             self._secondary_marker_artist = None
             self._overlay_line_artist = None
@@ -212,7 +219,9 @@ class MapCanvas(FigureCanvas):
         else:
             self._image.set_data(data)
             self._image.set_cmap(cmap)
-            if vmin is not None or vmax is not None:
+            if norm is not None:
+                self._image.set_norm(norm)
+            elif vmin is not None or vmax is not None:
                 self._image.set_clim(vmin=vmin, vmax=vmax)
             self._update_overlay_line()
         self._figure.tight_layout()
@@ -664,6 +673,7 @@ class MapPanel(QtWidgets.QWidget):
         overlay_layout.addWidget(label_h)
         overlay_layout.addWidget(self._high_spin)
         overlay_layout.addWidget(self._error_label)
+        self._overlay_layout = overlay_layout
 
         container = QtWidgets.QWidget()
         container_layout = QtWidgets.QGridLayout(container)
@@ -746,6 +756,31 @@ class MapPanel(QtWidgets.QWidget):
 
         self._low_spin.valueChanged.connect(handler)
         self._high_spin.valueChanged.connect(handler)
+
+    def add_tool_button(
+        self,
+        icon: QtGui.QIcon,
+        tooltip: str,
+        handler: QtCore.Slot,
+    ) -> QtWidgets.QToolButton:
+        """Add an icon-only action to the map overlay toolbar.
+
+        Parameters:
+            icon: Button icon.
+            tooltip: Hover description.
+            handler: Click handler.
+
+        Returns:
+            Created tool button.
+        """
+
+        button = QtWidgets.QToolButton(self)
+        button.setIcon(icon)
+        button.setIconSize(QtCore.QSize(14, 14))
+        button.setToolTip(tooltip)
+        button.clicked.connect(handler)
+        self._overlay_layout.addWidget(button)
+        return button
 
     def set_error(self, message: str) -> None:
         """Set an inline error message.

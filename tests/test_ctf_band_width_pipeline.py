@@ -91,6 +91,7 @@ def _write_config(
         "desired_hkl: 110",
         "rectWidth: 2",
         "min_psnr: 1.0",
+        "orientation_source: acquisition",
         "hkl_list:",
         "  - [1, 1, 0]",
         "phase_list:",

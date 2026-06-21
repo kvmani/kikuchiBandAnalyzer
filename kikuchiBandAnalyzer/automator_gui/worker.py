@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
 from PySide6 import QtCore
 
 from KikuchiBandWidthAutomator import BandWidthAutomator
@@ -23,6 +24,7 @@ class AutomatorWorker(QtCore.QThread):
         progress_changed: Emits (processed_count, total_count, eta_seconds).
         pixel_changed: Emits (x, y, processed_count).
         pixel_result: Emits a reusable live-view payload for a completed pixel.
+        visualization_ready: Emits the completed in-memory line cache and diagnostics.
         finished_success: Emits (output_path, summary_dict).
         cancelled: Emits cancellation message.
         failed: Emits error message with stack trace.
@@ -32,6 +34,7 @@ class AutomatorWorker(QtCore.QThread):
     progress_changed = QtCore.Signal(int, int, float)
     pixel_changed = QtCore.Signal(int, int, int)
     pixel_result = QtCore.Signal(object)
+    visualization_ready = QtCore.Signal(object)
     finished_success = QtCore.Signal(str, object)
     cancelled = QtCore.Signal(str)
     failed = QtCore.Signal(str)
@@ -96,6 +99,7 @@ class AutomatorWorker(QtCore.QThread):
                         "pattern": pattern,
                         "annotations": annotations,
                         "entry": entry,
+                        "orientation": self._orientation_payload(automator, pixel_index),
                     }
                 )
             except Exception:
@@ -134,6 +138,16 @@ class AutomatorWorker(QtCore.QThread):
                 return
             automator.export_results(processed)
 
+            self.visualization_ready.emit(
+                {
+                    "annotations": automator.grouped_dict_list,
+                    "orientation_source": str(
+                        automator.config.get("orientation_source", "indexed")
+                    ),
+                    "diagnostics": automator.orientation_diagnostics,
+                }
+            )
+
             summary = self._summarize(automator, processed)
             summary_path = Path(automator.modified_data_path).with_name(
                 f"{automator.base_name}_run_summary.json"
@@ -148,6 +162,32 @@ class AutomatorWorker(QtCore.QThread):
             self._logger.exception("Automator GUI worker failed: %s", exc)
             trace = traceback.format_exc()
             self.failed.emit(f"{exc}\n\n{trace}")
+
+    def _orientation_payload(
+        self,
+        automator: BandWidthAutomator,
+        pixel_index: int,
+    ) -> Dict[str, Any]:
+        """Return compact runtime-orientation diagnostics for one pixel.
+
+        Parameters:
+            automator: Active automator instance.
+            pixel_index: Flattened row-major pixel index.
+
+        Returns:
+            Diagnostic dictionary suitable for a Qt signal payload.
+        """
+
+        diagnostics = automator.orientation_diagnostics
+        if diagnostics is None:
+            return {"source": "precomputed", "indexing_success": None, "fallback": False}
+        return {
+            "source": diagnostics.source,
+            "indexing_success": int(diagnostics.indexing_success[pixel_index]),
+            "fallback": bool(diagnostics.orientation_fallback[pixel_index]),
+            "fit": float(diagnostics.fit[pixel_index]),
+            "confidence": float(diagnostics.confidence[pixel_index]),
+        }
 
     def _summarize(self, automator: BandWidthAutomator, processed: list[dict]) -> Dict[str, Any]:
         """Compute a compact summary of a completed run.
@@ -191,7 +231,14 @@ class AutomatorWorker(QtCore.QThread):
                 "mean": float(np.mean(finite)),
                 "max": float(np.max(finite)),
             }
-        import numpy as np
+        diagnostics = automator.orientation_diagnostics
+        indexed_count = 0
+        fallback_count = 0
+        orientation_source = str(automator.config.get("orientation_source", "indexed"))
+        if diagnostics is not None:
+            orientation_source = diagnostics.source
+            indexed_count = int(np.sum(diagnostics.source_used == 1))
+            fallback_count = int(np.sum(diagnostics.orientation_fallback == 1))
         return {
             "output_dir": str(Path(automator.modified_data_path).parent),
             "output_file": str(automator.modified_data_path),
@@ -199,6 +246,12 @@ class AutomatorWorker(QtCore.QThread):
             "n_valid": int(n_valid),
             "bandwidth": _stats(bandwidths),
             "psnr": _stats(psnrs),
-            "orientation_policy": "original acquisition Euler angles preserved",
+            "orientation_source": orientation_source,
+            "indexed_count": indexed_count,
+            "fallback_count": fallback_count,
+            "orientation_policy": (
+                "runtime indexed/acquisition simulation; original acquisition Euler "
+                "angles preserved in standard exports"
+            ),
         }
 

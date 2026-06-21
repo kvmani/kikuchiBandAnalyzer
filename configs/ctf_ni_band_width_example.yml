@@ -37,6 +37,12 @@ ctf_detector:
   binning: 1
 
 ctf_euler_direction: lab2crystal
+orientation_source: indexed
+hough:
+  enabled: true
+  n_bands: 10
+  t_sigma: 2.0
+  r_sigma: 2.0
 debug: false
 plot_band_detection: false
 plot_band_detection_condition: "False"

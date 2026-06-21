@@ -24,6 +24,7 @@ from kikuchiBandAnalyzer.ebsd_compare.band_data import BandProfilePayload, extra
 from kikuchiBandAnalyzer.ebsd_compare.gui.band_profile_plot import BandProfilePlot
 from kikuchiBandAnalyzer.ebsd_compare.gui.logging_widget import GuiLogHandler, LogEmitter, LogViewer
 from kikuchiBandAnalyzer.ebsd_compare.gui.main_window import MapPanel
+from kikuchiBandAnalyzer.ebsd_compare.map_display import MapDisplaySettings
 from kikuchiBandAnalyzer.ebsd_compare.readers.oh5_reader import OH5ScanFileReader
 from kikuchiBandAnalyzer.ebsd_compare.utils import configure_logging
 from kikuchiBandAnalyzer.io.hkl_ctf_to_tsl import convert_hkl_ctf_fixture_to_tsl, parse_ctf_file
@@ -33,6 +34,7 @@ from kikuchiBandAnalyzer.single_pattern_solver.solver import (
     SinglePatternSolution,
     solve_single_pattern,
 )
+from kikuchiBandAnalyzer.workflow_gui.map_settings_dialog import MapDisplaySettingsDialog
 from simulators import CustomKikuchiPatternSimulator
 import utilities as ut
 
@@ -80,6 +82,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._single_solution: Optional[SinglePatternSolution] = None
         self._map_panels: dict[str, tuple[MapPanel, MapPanel]] = {}
         self._ipf_cache: dict[str, np.ndarray] = {}
+        self._map_display_settings: dict[str, MapDisplaySettings] = {}
+        self._orientation_diagnostics: Any = None
         self._live_render_clock = QtCore.QElapsedTimer()
         self._live_render_clock.start()
         self._auto_solve_timer = QtCore.QTimer(self)
@@ -210,6 +214,12 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._rect_width_spin.setValue(20)
         self._min_psnr_spin = self._double_spin(1.01, 0.0, 1000.0, 3)
         self._debug_checkbox = QtWidgets.QCheckBox("Debug")
+        self._orientation_source_combo = QtWidgets.QComboBox()
+        self._orientation_source_combo.addItem("Live Hough indexed (PyEBSDIndex)", "indexed")
+        self._orientation_source_combo.addItem("Acquisition Euler angles", "acquisition")
+        self._orientation_source_combo.currentIndexChanged.connect(
+            self._on_orientation_source_changed
+        )
         analysis_form.addRow("Phase", self._phase_name_edit)
         analysis_form.addRow("Space group", self._space_group_spin)
         analysis_form.addRow("Lattice", self._lattice_edit)
@@ -224,6 +234,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         analysis_form.addRow("Elastic modulus", self._modulus_spin)
         analysis_form.addRow("rectWidth", self._rect_width_spin)
         analysis_form.addRow("min_psnr", self._min_psnr_spin)
+        analysis_form.addRow("Euler source", self._orientation_source_combo)
         analysis_form.addRow("", self._debug_checkbox)
         layout.addWidget(analysis_group)
 
@@ -243,9 +254,6 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         pixel_layout.addWidget(QtWidgets.QLabel("Y"))
         pixel_layout.addWidget(self._pixel_y_spin)
         calibration_form.addRow("Pixel", pixel_row)
-        self._diagnostic_hough_checkbox = QtWidgets.QCheckBox("Use Hough-indexed diagnostic overlay")
-        self._diagnostic_hough_checkbox.setChecked(True)
-        calibration_form.addRow("", self._diagnostic_hough_checkbox)
         self._auto_resolve_checkbox = QtWidgets.QCheckBox("Re-solve after PC drag")
         self._auto_resolve_checkbox.setChecked(True)
         calibration_form.addRow("", self._auto_resolve_checkbox)
@@ -296,13 +304,32 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             ("Validity", "band_valid"),
             ("Strain", "strain"),
             ("Stress", "stress"),
+            ("Index/Fallback", "orientation_fallback"),
         ]
+        gear_icon = QtGui.QIcon.fromTheme("preferences-system")
+        if gear_icon.isNull():
+            gear_icon = self.style().standardIcon(QtWidgets.QStyle.SP_FileDialogDetailedView)
         for tab_label, field_name in map_specs:
             tab = QtWidgets.QWidget()
             tab_layout = QtWidgets.QHBoxLayout(tab)
             tab_layout.setContentsMargins(0, 0, 0, 0)
             iq_panel = MapPanel("IQ", 2.0, 98.0)
             result_panel = MapPanel(tab_label, 2.0, 98.0)
+            self._map_display_settings.setdefault("IQ", self._default_map_display_settings("IQ"))
+            self._map_display_settings.setdefault(
+                field_name, self._default_map_display_settings(field_name)
+            )
+            iq_panel.add_tool_button(
+                gear_icon,
+                "IQ display properties",
+                lambda _checked=False: self._edit_map_display("IQ"),
+            )
+            if not field_name.startswith("IPF-"):
+                result_panel.add_tool_button(
+                    gear_icon,
+                    f"{tab_label} display properties",
+                    lambda _checked=False, field=field_name: self._edit_map_display(field),
+                )
             for map_panel in (iq_panel, result_panel):
                 map_panel.canvas().connect_click(self._on_map_click)
                 map_panel.canvas().mpl_connect("motion_notify_event", self._on_map_hover)
@@ -614,12 +641,42 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._rect_width_spin.setValue(int(profile_cfg.get("rectWidth", raw.get("rectWidth", self._rect_width_spin.value()))))
         self._min_psnr_spin.setValue(float(profile_cfg.get("min_psnr", raw.get("min_psnr", self._min_psnr_spin.value()))))
         self._debug_checkbox.setChecked(bool(raw.get("debug", False)))
+        orientation_source = str(raw.get("orientation_source", "indexed")).lower()
+        if orientation_source == "original":
+            orientation_source = "acquisition"
+        source_index = self._orientation_source_combo.findData(orientation_source)
+        self._orientation_source_combo.setCurrentIndex(max(0, source_index))
         if input_cfg.get("x") is not None:
             self._pixel_x_spin.setValue(int(input_cfg["x"]))
         if input_cfg.get("y") is not None:
             self._pixel_y_spin.setValue(int(input_cfg["y"]))
         hough_cfg = dict(raw.get("hough", {}) or {})
-        self._diagnostic_hough_checkbox.setChecked(bool(hough_cfg.get("use_indexed_orientation", True)))
+        if "orientation_source" not in raw and not bool(
+            hough_cfg.get("use_indexed_orientation", True)
+        ):
+            self._orientation_source_combo.setCurrentIndex(
+                self._orientation_source_combo.findData("acquisition")
+            )
+        for field_name, values in dict(raw.get("map_display", {}) or {}).items():
+            defaults = self._default_map_display_settings(str(field_name)).to_mapping()
+            self._map_display_settings[str(field_name)] = MapDisplaySettings.from_mapping(
+                values, **defaults
+            )
+        for map_field, (iq_panel, result_panel) in self._map_panels.items():
+            iq_settings = self._map_display_settings.get("IQ")
+            if iq_settings is not None and iq_settings.range_mode == "auto":
+                iq_panel.set_contrast_values(
+                    iq_settings.percentile_low,
+                    iq_settings.percentile_high,
+                    block_signals=True,
+                )
+            result_settings = self._map_display_settings.get(map_field)
+            if result_settings is not None and result_settings.range_mode == "auto":
+                result_panel.set_contrast_values(
+                    result_settings.percentile_low,
+                    result_settings.percentile_high,
+                    block_signals=True,
+                )
         self._on_mode_changed(preserve_values=True)
         self._logger.info("Loaded workflow configuration: %s", config_path)
 
@@ -760,8 +817,20 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             "plot_band_detection": False,
             "plot_band_detection_condition": "False",
             "skip_display_EBSDmap": True,
-            "orientation_source": "original",
+            "orientation_source": str(self._orientation_source_combo.currentData()),
             "orientation_direction": "lab2crystal",
+            "hough": {
+                "enabled": True,
+                "use_indexed_orientation": self._orientation_source_combo.currentData()
+                == "indexed",
+                "n_bands": 10,
+                "t_sigma": 2.0,
+                "r_sigma": 2.0,
+            },
+            "map_display": {
+                field: settings.to_mapping()
+                for field, settings in self._map_display_settings.items()
+            },
         }
         pc = self._parse_float_list(self._pc_edit.text(), expected=3, label="PC")
         convention = self._detector_convention_combo.currentText()
@@ -953,6 +1022,23 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             return
         self._set_selected_pixel(self._pixel_x_spin.value(), self._pixel_y_spin.value())
 
+    def _on_orientation_source_changed(self, _index: int) -> None:
+        """Invalidate stale overlays when the runtime Euler source changes.
+
+        Parameters:
+            _index: New combo-box index.
+
+        Returns:
+            None.
+        """
+
+        self._simulated_lines_by_index = {}
+        self._orientation_diagnostics = None
+        if hasattr(self, "_pattern_panel"):
+            self._pattern_panel.canvas().clear_overlay_line()
+        if self._scan_dataset is not None:
+            self._simulate_preview_lines()
+
     def _on_pc_dragged(self, pcx: float, pcy: float) -> None:
         """Update the PC edit after dragging the diagnostic marker.
 
@@ -1026,7 +1112,8 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             },
             "hough": {
                 "enabled": True,
-                "use_indexed_orientation": bool(self._diagnostic_hough_checkbox.isChecked()),
+                "use_indexed_orientation": self._orientation_source_combo.currentData()
+                == "indexed",
                 "n_bands": 5,
                 "t_sigma": 2,
                 "r_sigma": 2,
@@ -1108,13 +1195,12 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         except Exception:
             iq = np.zeros((dataset.ny, dataset.nx), dtype=np.float32)
         for field, (iq_panel, result_panel) in self._map_panels.items():
-            self._update_map_panel(iq_panel, iq, cmap="gray", reset_view=reset_view)
+            self._update_map_panel(iq_panel, iq, field="IQ", reset_view=reset_view)
             try:
                 data = self._ipf_map(field) if field.startswith("IPF-") else dataset.get_map(field)
             except Exception:
                 data = np.zeros((dataset.ny, dataset.nx), dtype=np.float32)
-            cmap = "viridis" if field not in {"band_valid"} and not field.startswith("IPF-") else "gray"
-            self._update_map_panel(result_panel, data, cmap=cmap, reset_view=reset_view)
+            self._update_map_panel(result_panel, data, field=field, reset_view=reset_view)
         if self._selected_xy is not None:
             x, y = self._selected_xy
             for iq_panel, result_panel in self._map_panels.values():
@@ -1126,7 +1212,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         panel: MapPanel,
         data: np.ndarray,
         *,
-        cmap: str,
+        field: str,
         reset_view: bool,
     ) -> None:
         """Display scalar or RGB data with appropriate contrast handling.
@@ -1134,7 +1220,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         Parameters:
             panel: Destination map panel.
             data: Scalar or RGB map array.
-            cmap: Matplotlib colormap for scalar data.
+            field: Scientific field name used to resolve display settings.
             reset_view: Whether axes limits should be reset.
 
         Returns:
@@ -1145,16 +1231,81 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         if array.ndim == 3 and array.shape[-1] in {3, 4}:
             panel.canvas().update_data(array, reset_view=reset_view)
             return
-        low, high = panel.contrast_values()
-        finite = array[np.isfinite(array)]
-        if finite.size:
-            vmin = float(np.percentile(finite, low))
-            vmax = float(np.percentile(finite, high))
-            if vmin == vmax:
-                vmax = vmin + 1.0
-        else:
-            vmin, vmax = 0.0, 1.0
-        panel.canvas().update_data(array, cmap=cmap, vmin=vmin, vmax=vmax, reset_view=reset_view)
+        settings = self._map_display_settings.setdefault(
+            field, self._default_map_display_settings(field)
+        )
+        if settings.range_mode == "auto":
+            low, high = panel.contrast_values()
+            settings.percentile_low = float(low)
+            settings.percentile_high = float(high)
+        try:
+            norm, cmap = settings.render_parameters(array)
+            panel.clear_error()
+        except ValueError as exc:
+            panel.set_error(str(exc))
+            fallback = self._default_map_display_settings(field)
+            norm, cmap = fallback.render_parameters(array)
+        panel.canvas().update_data(
+            array, cmap=cmap, norm=norm, reset_view=reset_view
+        )
+
+    def _default_map_display_settings(self, field: str) -> MapDisplaySettings:
+        """Return scientifically useful default display settings for a field.
+
+        Parameters:
+            field: Scalar field name.
+
+        Returns:
+            New settings instance.
+        """
+
+        if field == "IQ":
+            return MapDisplaySettings(colormap="gray")
+        if field in {"band_valid", "orientation_fallback", "indexing_success"}:
+            return MapDisplaySettings(
+                range_mode="manual", minimum=0.0, maximum=1.0, colormap="gray"
+            )
+        if field in {"strain", "stress"}:
+            return MapDisplaySettings(
+                scale="symlog",
+                symmetric=True,
+                linthresh=1.0e-3 if field == "strain" else 1.0e6,
+                colormap="coolwarm",
+                invalid_color="#808080",
+            )
+        return MapDisplaySettings(colormap="viridis")
+
+    def _edit_map_display(self, field: str) -> None:
+        """Open the scalar-map display settings dialog.
+
+        Parameters:
+            field: Scalar field being edited.
+
+        Returns:
+            None.
+        """
+
+        current = self._map_display_settings.setdefault(
+            field, self._default_map_display_settings(field)
+        )
+        dialog = MapDisplaySettingsDialog(
+            field,
+            current,
+            defaults=self._default_map_display_settings(field),
+            parent=self,
+        )
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        self._map_display_settings[field] = dialog.settings()
+        settings = self._map_display_settings[field]
+        for map_field, (iq_panel, result_panel) in self._map_panels.items():
+            target = iq_panel if field == "IQ" else result_panel if map_field == field else None
+            if target is not None and settings.range_mode == "auto":
+                target.set_contrast_values(
+                    settings.percentile_low, settings.percentile_high, block_signals=True
+                )
+        self._logger.info("Updated %s map display settings: %s", field, settings.to_mapping())
+        self._refresh_map(False)
 
     def _ipf_map(self, field: str) -> np.ndarray:
         """Return an IPF RGB map computed from original acquisition Euler angles.
@@ -1297,6 +1448,13 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
 
         self._simulated_lines_by_index = {}
         if self._scan_dataset is None or self._pattern_field is None:
+            return
+        if self._orientation_source_combo.currentData() == "indexed":
+            self._logger.info(
+                "Preview acquisition-Euler overlays are suppressed because live indexed "
+                "orientation mode is selected. Use Solve Selected Pattern; the full run "
+                "will populate indexed/fallback overlays for every pixel."
+            )
             return
         try:
             eulers = self._read_preview_eulers()
@@ -1545,9 +1703,11 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             item = dict(line)
             family = str(item.get("hkl", ""))
             count = counts_by_family.get(family, 0)
-            item["show_label"] = count < 2
+            item.setdefault("show_label", count < 2)
             counts_by_family[family] = count + 1
-            item["label_fraction"] = 0.12 if (index + count) % 2 == 0 else 0.88
+            item.setdefault(
+                "label_fraction", 0.12 if (index + count) % 2 == 0 else 0.88
+            )
             prepared.append(item)
         return prepared
 
@@ -1563,7 +1723,18 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
             Human-readable metric string.
         """
 
-        fields = ["Band_Width", "psnr", "band_valid", "strain", "stress", "band_intensity_ratio"]
+        fields = [
+            "Band_Width",
+            "psnr",
+            "band_valid",
+            "strain",
+            "stress",
+            "band_intensity_ratio",
+            "indexing_success",
+            "orientation_fallback",
+            "indexing_fit",
+            "indexing_confidence",
+        ]
         parts = []
         for field in fields:
             try:
@@ -1575,8 +1746,14 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
     def _start_run(self) -> None:
         """Start the background automator worker."""
 
-        if self._resolved_config_path is None:
+        if self._prepared_h5_path is None and self._prepared_oh5_path is None:
             QtWidgets.QMessageBox.warning(self, "Not prepared", "Prepare the inputs first.")
+            return
+        try:
+            self._write_resolved_config()
+        except Exception as exc:
+            self._logger.exception("Failed to resolve current run settings: %s", exc)
+            QtWidgets.QMessageBox.critical(self, "Invalid run settings", str(exc))
             return
         self._logger.info("Starting workflow analysis with %s", self._resolved_config_path)
         self._run_button.setEnabled(False)
@@ -1587,6 +1764,7 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         worker.progress_changed.connect(self._on_worker_progress)
         worker.pixel_changed.connect(self._on_worker_pixel)
         worker.pixel_result.connect(self._on_worker_pixel_result)
+        worker.visualization_ready.connect(self._on_worker_visualization_ready)
         worker.finished_success.connect(self._on_worker_finished)
         worker.cancelled.connect(self._on_worker_cancelled)
         worker.failed.connect(self._on_worker_failed)
@@ -1649,13 +1827,6 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
         self._pattern_panel.canvas().update_data(pattern, cmap="gray", vmin=vmin, vmax=vmax, reset_view=True)
         annotations = payload.get("annotations", {})
         lines = list(annotations.get("points", [])) if isinstance(annotations, dict) else []
-        if lines:
-            self._pattern_panel.canvas().set_overlay_lines(
-                self._prepare_overlay_labels(lines),
-                color="#00e676",
-                linewidth=1.8,
-                show_labels=True,
-            )
         entry = payload.get("entry", {})
         bands = entry.get("bands", []) if isinstance(entry, dict) else []
         best = self._select_display_band(bands)
@@ -1672,7 +1843,64 @@ class WorkflowGuiMainWindow(QtWidgets.QMainWindow):
                 band_valid=bool(best.get("band_valid")),
             )
             self._profile_plot.update_plot(profile_payload, None, normalize=True, show_markers=True)
+            if central_line.size >= 4 and np.isfinite(central_line[:4]).all():
+                lines.append(
+                    {
+                        "hkl": f"Profile {{{self._desired_hkl_value()}}}",
+                        "central_line": central_line[:4].tolist(),
+                        "color": "#ffeb3b",
+                        "linewidth": 4.0,
+                        "show_label": True,
+                        "label_fraction": 0.42,
+                    }
+                )
+        if lines:
+            self._pattern_panel.canvas().set_overlay_lines(
+                self._prepare_overlay_labels(lines),
+                color="#00e676",
+                linewidth=1.8,
+                show_labels=True,
+            )
+        orientation = payload.get("orientation", {})
+        if isinstance(orientation, dict):
+            source = str(orientation.get("source", "unknown"))
+            fallback = bool(orientation.get("fallback", False))
+            fit = orientation.get("fit")
+            confidence = orientation.get("confidence")
+            self._metrics_label.setText(
+                f"Orientation: {source}"
+                + (" (acquisition fallback)" if fallback else "")
+                + f"; fit={fit!s}; confidence={confidence!s}"
+            )
         self._inspector_tabs.setCurrentIndex(1)
+
+    def _on_worker_visualization_ready(self, payload: object) -> None:
+        """Store completed runtime line annotations for post-run inspection.
+
+        Parameters:
+            payload: Worker visualization dictionary.
+
+        Returns:
+            None.
+        """
+
+        if not isinstance(payload, dict):
+            return
+        annotations = payload.get("annotations")
+        if isinstance(annotations, list):
+            converted: dict[int, list[dict[str, object]]] = {}
+            for index, entry in enumerate(annotations):
+                if isinstance(entry, dict):
+                    points = entry.get("points", [])
+                    if isinstance(points, list):
+                        converted[index] = [dict(point) for point in points if isinstance(point, dict)]
+            self._simulated_lines_by_index = converted
+        self._orientation_diagnostics = payload.get("diagnostics")
+        self._logger.info(
+            "Loaded completed %s runtime overlay cache for %d pixels.",
+            payload.get("orientation_source", "unknown"),
+            len(self._simulated_lines_by_index),
+        )
 
     def _select_display_band(self, bands: object) -> Optional[dict[str, object]]:
         """Choose the most useful band dictionary for GUI display.

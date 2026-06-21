@@ -11,24 +11,19 @@ where the data set is cropped and detailed logging is enabled.
 
 import argparse
 import time
-import os
 from pathlib import Path
 from configLoader import load_config
 import logging
 
-import matplotlib.pyplot as plt
 import kikuchipy as kp
-from orix import plot
 from diffsims.crystallography import ReciprocalLatticeVector
 from diffpy.structure import Atom, Lattice, Structure
 from orix.crystal_map import Phase, PhaseList
 from orix.quaternion import Rotation
-from orix.vector import Vector3d
 from typing import Optional
 import numpy as np
 
 import pandas as pd
-import json
 from kikuchiBandWidthDetector import KikuchiBatchProcessor
 from kikuchiBandWidthDetector import prepare_json_input
 import shutil
@@ -38,12 +33,12 @@ from kikuchiBandAnalyzer.band_width.ctf_acquisition import (
     CtfBandWidthAcquisition,
     export_ctf_with_prias_metrics,
 )
-from kikuchiBandAnalyzer.derived_fields import build_default_registry, write_hdf5_dataset
-from simulators import (
-    make_text_marker,
-    CustomGeometricalKikuchiPatternSimulation,
-    CustomKikuchiPatternSimulator,
+from kikuchiBandAnalyzer.band_width.orientation import (
+    normalize_orientation_source,
+    select_runtime_orientations,
 )
+from kikuchiBandAnalyzer.derived_fields import build_default_registry, write_hdf5_dataset
+from simulators import CustomKikuchiPatternSimulator
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -80,6 +75,7 @@ class BandWidthAutomator:
         self.dataset = None
         self.grouped_dict_list = None
         self.ctf_acquisition_result = None
+        self.orientation_diagnostics = None
         logging.info('Justcompleted the object initiation')
 
     # ------------------------------------------------------------------
@@ -117,13 +113,13 @@ class BandWidthAutomator:
         logging.info(f"Loading dataset from: {path}")
         self.dataset = kp.load(path, lazy=False)
 
-        if self.config.get("debug", False) and str(
-            self.config.get("orientation_source", "original")
-        ).lower() == "original":
+        if self.config.get("debug", False) and normalize_orientation_source(
+            self.config.get("orientation_source", "indexed")
+        ) in {"indexed", "acquisition"}:
             logging.info(
                 "Debug mode is enabled, but dataset cropping is skipped because "
-                "orientation_source=original requires the pattern grid to stay aligned "
-                "with the original HDF5 Euler/scalar arrays."
+                "runtime orientation selection and acquisition-Euler fallback require "
+                "the pattern grid to stay aligned with the original HDF5 arrays."
             )
         elif self.config.get("debug", False):
             crop_start = self.config.get("crop_start", 5)
@@ -134,12 +130,10 @@ class BandWidthAutomator:
 
     # ------------------------------------------------------------------
     def simulate_and_index(self):
-        """Simulate production band locations from acquisition orientations.
+        """Select runtime orientations and simulate production band locations.
 
-        Hough indexing is intentionally excluded from the batch production path.
-        It is available in the single-pattern diagnostic solver, but exported
-        HDF5/OH5/ANG orientations and production band locations must continue to
-        use the Euler angles supplied by the acquisition data.
+        Indexed orientations are used only in memory for simulation. Acquisition
+        Euler datasets remain authoritative for IPF maps and exported files.
         """
         annotation_path = self.config.get("band_annotation_json_path") or self.config.get(
             "line_annotation_json_path"
@@ -157,73 +151,86 @@ class BandWidthAutomator:
                 annotation_path,
             )
             return
-        if self.source_format == "ctf":
-            self.grouped_dict_list = self._simulate_ctf_band_lines()
-            return
-        if str(self.config.get("orientation_source", "original")).lower() == "original":
-            self.grouped_dict_list = self._simulate_h5_original_band_lines()
-            return
-        phase_cfg = self.config["phase_list"]
-        phase_list = PhaseList(
-            Phase(
-                name=phase_cfg["name"],
-                space_group=phase_cfg["space_group"],
-                structure=Structure(
-                    lattice=Lattice(*phase_cfg["lattice"]),
-                    atoms=[Atom(at["element"], at["position"]) for at in phase_cfg["atoms"]],
-                ),
-            ),
-        )
-        hkl_list = self.config["hkl_list"]
-        header_data = ut.extract_header_data(str(self.modified_data_path))
-
-        sig_shape = self.dataset.axes_manager.signal_shape[::-1]
-        detector_cfg = dict(self.config.get("detector", {}) or {})
-        convention = str(detector_cfg.get("convention", self.config.get("detector_convention", "edax")))
-        pc = detector_cfg.get("pc", self.config.get("pc", header_data.get("pc", (0.0, 0.0, 0.0))))
-        det = kp.detectors.EBSDDetector(
-            sig_shape,
-            sample_tilt=float(detector_cfg.get("sample_tilt", header_data.get("Sample Tilt", 0.0))),
-            tilt=float(detector_cfg.get("tilt", header_data.get("Camera Elevation Angle", 0.0))),
-            azimuthal=float(detector_cfg.get("azimuthal", header_data.get("Camera Azimuthal Angle", 0.0))),
-            convention=convention,
-            pc=tuple(pc),
-        )
-        logging.info(
-            "Built EBSD detector for HDF5/TSL route with convention=%s, pc=%s.",
-            convention,
-            tuple(pc),
-        )
-
-        indexer = det.get_indexer(phase_list, hkl_list, nBands=10, tSigma=2, rSigma=2)
-        xmap, index_data, indexed_band_data = self.dataset.hough_indexing(
-            phase_list=phase_list,
-            indexer=indexer,
-            return_index_data=True,
-            return_band_data=True,
-            verbose=1,
-        )
-
+        phase_list = self._build_phase_list()
         phase = phase_list[0]
-        ref = ReciprocalLatticeVector(phase=xmap.phases[0], hkl=hkl_list).symmetrise()
+        hkl_list = self.config["hkl_list"]
+        detector = self._build_runtime_detector()
+        acquisition_eulers = self._read_acquisition_eulers_rad()
+        direction = str(
+            self.config.get(
+                "ctf_euler_direction" if self.source_format == "ctf" else "orientation_direction",
+                "lab2crystal",
+            )
+        )
+        selection = select_runtime_orientations(
+            self.dataset.data,
+            acquisition_eulers,
+            detector,
+            phase_list,
+            hkl_list,
+            source=self.config.get("orientation_source", "indexed"),
+            direction=direction,
+            hough=dict(self.config.get("hough", {}) or {}),
+            signal=self.dataset,
+            logger=logging.getLogger(__name__),
+        )
+        self.orientation_diagnostics = selection
+        logging.info(
+            "Simulating production lines with orientation_source=%s; acquisition Euler "
+            "arrays remain unchanged in all exports.",
+            selection.source,
+        )
+        ref = ReciprocalLatticeVector(phase=phase, hkl=hkl_list).symmetrise()
         simulator = CustomKikuchiPatternSimulator(ref)
-        sim = simulator.on_detector(det, xmap.rotations.reshape(*xmap.shape))
+        sim = simulator.on_detector(detector, selection.rotations)
         sim.phase = phase
-
         desired_hkl = str(self.config.get("desired_hkl", "1,1,1"))
         markers, grouped_dict_list = sim.as_markers(
             kikuchi_line_labels=True, desired_hkl=desired_hkl
         )
-        self.dataset.add_marker(markers, plot_marker=False, permanent=True)
-        self.grouped_dict_list = grouped_dict_list
+        expected = int(np.prod(self.dataset.data.shape[:2]))
+        self.grouped_dict_list = (
+            grouped_dict_list
+            if len(grouped_dict_list) == expected
+            else self._pad_grouped_annotations(grouped_dict_list)
+        )
+        if hasattr(self.dataset, "add_marker"):
+            self.dataset.add_marker(markers, plot_marker=False, permanent=True)
 
-        if not self.config.get("skip_display_EBSDmap", False):
-            v_ipf = Vector3d.xvector()
-            sym = xmap.phases[0].point_group
-            rgb = plot.IPFColorKeyTSL(sym, v_ipf).orientation2color(xmap.rotations)
-            maps_nav_rgb = kp.draw.get_rgb_navigator(rgb.reshape(xmap.shape + (3,)))
-            self.dataset.plot(maps_nav_rgb)
-            plt.show()
+    def _read_acquisition_eulers_rad(self) -> np.ndarray:
+        """Return acquisition Euler angles in radians for either input route.
+
+        Returns:
+            Euler array shaped ``(n_pixels, 3)``.
+        """
+
+        if self.source_format == "ctf":
+            if self.ctf_acquisition_result is None:
+                raise RuntimeError("CTF acquisition result is unavailable.")
+            return np.deg2rad(
+                np.asarray(self.ctf_acquisition_result.euler_angles_deg, dtype=np.float64)
+            )
+        return self._read_h5_original_eulers()
+
+    def _build_runtime_detector(self):
+        """Build the configured detector used by runtime orientation selection.
+
+        Returns:
+            Configured kikuchipy EBSD detector.
+        """
+
+        if self.source_format == "ctf":
+            return self._build_ctf_detector()
+        header_data = ut.extract_header_data(str(self.modified_data_path))
+        detector_cfg = dict(self.config.get("detector", {}) or {})
+        return kp.detectors.EBSDDetector(
+            shape=tuple(int(value) for value in self.dataset.data.shape[-2:]),
+            sample_tilt=float(detector_cfg.get("sample_tilt", header_data.get("Sample Tilt", 0.0))),
+            tilt=float(detector_cfg.get("tilt", header_data.get("Camera Elevation Angle", 0.0))),
+            azimuthal=float(detector_cfg.get("azimuthal", header_data.get("Camera Azimuthal Angle", 0.0))),
+            convention=str(detector_cfg.get("convention", self.config.get("detector_convention", "edax"))),
+            pc=tuple(detector_cfg.get("pc", self.config.get("pc", header_data.get("pc", (0.5, 0.5, 0.5))))),
+        )
 
     def _simulate_h5_original_band_lines(self):
         """Simulate HDF5/OH5 band annotations from stored Euler datasets.
@@ -701,6 +708,29 @@ class BandWidthAutomator:
             profile_length_array = np.full(n_pixels, profile_length, dtype="int32")
             band_valid_array = np.zeros(n_pixels, dtype="int8")
 
+            if self.orientation_diagnostics is None:
+                indexing_success_array = np.full(n_pixels, -1, dtype="int8")
+                orientation_fallback_array = np.zeros(n_pixels, dtype="int8")
+                orientation_source_used_array = np.zeros(n_pixels, dtype="int8")
+                indexing_fit_array = np.full(n_pixels, np.nan, dtype="float32")
+                indexing_confidence_array = np.full(n_pixels, np.nan, dtype="float32")
+            else:
+                indexing_success_array = np.asarray(
+                    self.orientation_diagnostics.indexing_success, dtype="int8"
+                ).reshape(n_pixels)
+                orientation_fallback_array = np.asarray(
+                    self.orientation_diagnostics.orientation_fallback, dtype="int8"
+                ).reshape(n_pixels)
+                orientation_source_used_array = np.asarray(
+                    self.orientation_diagnostics.source_used, dtype="int8"
+                ).reshape(n_pixels)
+                indexing_fit_array = np.asarray(
+                    self.orientation_diagnostics.fit, dtype="float32"
+                ).reshape(n_pixels)
+                indexing_confidence_array = np.asarray(
+                    self.orientation_diagnostics.confidence, dtype="float32"
+                ).reshape(n_pixels)
+
             band_width_array = np.zeros_like(ci_data, dtype="float32")
             psnr_array = np.zeros_like(ci_data, dtype="float32")
             efficientIntensity_array = np.zeros_like(ci_data, dtype="float32")
@@ -797,6 +827,11 @@ class BandWidthAutomator:
                 "band_intensity_ratio": eff_ratio_array,
                 "strain": band_strain_array,
                 "stress": band_stress_array,
+                "indexing_success": indexing_success_array,
+                "orientation_fallback": orientation_fallback_array,
+                "orientation_source_used": orientation_source_used_array,
+                "indexing_fit": indexing_fit_array,
+                "indexing_confidence": indexing_confidence_array,
             }
             registry = build_default_registry(logger=logging.getLogger(__name__))
             derived_outputs = registry.compute(base_outputs)

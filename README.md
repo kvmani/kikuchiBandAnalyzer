@@ -31,7 +31,7 @@ New in this repo version:
 - EBSD Comparator can overlay and compare exported `band_profile` vectors from Scan A/B.
 - A dedicated **OH5 to ANG Exporter GUI** supports mapping OH5 scalar fields into ANG columns with sanity checks and live logging.
 - A **Single Pattern Solver** can debug one EBSP from either OH5/H5 or CTF+pattern-folder input with YAML-configured phase, PC convention, detector geometry, simulated Kikuchi overlays, and a chosen `{111}` band profile.
-- A **Unified Workflow GUI** combines editable YAML/default inputs, draggable-PC single-pattern diagnostics, linked IQ/IPF/band-width result maps, live full-scan progress, and legacy-compatible ANG/OH5 exports. Hough-indexed orientations are diagnostic only; exported Euler angles remain unchanged.
+- A **Unified Workflow GUI** combines editable YAML/default inputs, selectable live-indexed or acquisition-Euler line simulation, draggable-PC diagnostics, linked scientific maps with configurable scaling, live full-scan progress, and legacy-compatible ANG/OH5 exports. Indexed orientations are runtime-only; exported Euler angles remain unchanged.
 
 Launch the unified application with an optional editable configuration:
 

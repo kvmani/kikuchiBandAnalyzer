@@ -69,11 +69,16 @@ For both routes, check these analysis inputs before running:
   by kikuchipy simulation and diagnostic indexing.
 - **rectWidth** and **min_psnr**: band-profile extraction width and acceptance
   threshold.
+- **Euler source**: choose **Live Hough indexed (PyEBSDIndex)**, the default,
+  or **Acquisition Euler angles**. This choice controls both diagnostic
+  simulated overlays and the lines used for full-scan band-width extraction.
 
 ## Recommended Workflow
 
 1. Select OH5/H5 plus its companion ANG, or select CTF plus its pattern folder.
-2. Verify the phase, lattice, PC convention, PC values, tilts, and HKL families.
+2. Verify the phase, lattice, PC convention, PC values, tilts, HKL families,
+   and **Euler source**. Keep the default live-indexed mode when the objective
+   is to solve each pattern before placing simulated lines.
 3. Click **Prepare / Preview**. The middle scan pixel is selected automatically.
 4. Inspect the IQ/IPF preview maps. Click a few map pixels or type X/Y values
    in **Selected Pattern**.
@@ -88,8 +93,8 @@ For both routes, check these analysis inputs before running:
 
 During full processing, the Batch Result inspector displays throttled live
 pattern overlays and profiles. The map tabs show linked IQ and IPF-X/IPF-Y/IPF-Z,
-band-width, PSNR, validity, strain, and stress maps. Clicking either map selects
-the same pixel and marks it with a bold plus sign.
+band-width, PSNR, validity, strain, stress, and indexing-fallback maps. Clicking
+either map selects the same pixel and marks it with a bold plus sign.
 
 ## Inspecting Results in the GUI
 
@@ -97,7 +102,7 @@ After a run completes, click any pixel in an IQ or result map. The GUI updates:
 
 - the selected-pixel marker on all map tabs;
 - the EBSP pattern image for that pixel;
-- solid simulated Kikuchi lines from the original acquisition orientation;
+- solid simulated Kikuchi lines from the selected runtime Euler source;
 - the highlighted band used for the selected band-profile measurement;
 - the band profile plot with start, peak, and end markers when available;
 - scalar metrics such as `Band_Width`, `psnr`, `band_valid`, strain, stress,
@@ -113,20 +118,47 @@ Use the map tabs to compare different outputs:
   validity criteria.
 - **Strain** and **Stress**: derived maps based on the configured reference
   width and elastic modulus.
+- **Index/Fallback**: `1` where live indexing failed and acquisition Euler
+  angles were used for that pixel; `0` where no fallback occurred.
 
 The Matplotlib toolbars provide pan, zoom, and reset controls. The contrast
 controls adjust the displayed percentile range for grayscale/scalar maps and
 patterns without changing the saved data.
 
-## Orientation Preservation
+### Scientific Map Display Properties
 
-Hough indexing in this GUI is diagnostic only. It helps assess the detector PC
-and geometry for an individual pattern, but its Euler solution is never written
-to ANG, H5, or OH5 output.
+Scalar maps have a gear button for display/plot properties. These controls do
+not alter numerical datasets; they only control GUI rendering and exported map
+PNGs. Settings are saved under `map_display` in the resolved YAML.
 
-Production simulated bands and IPF maps use the original acquisition Euler
-angles. Generated ANG files preserve the original Euler columns and replace only
-the legacy PRIAS metric columns:
+- **Automatic percentiles** uses configurable low/high percentiles. The default
+  is 2/98.
+- **Manual limits** uses an explicit minimum and maximum.
+- **Linear** is the default scale for IQ, band width, PSNR, and masks.
+- **Log** is useful for strictly positive data and rejects non-positive limits.
+- **Symlog** supports signed values. It is the recommended default for strain
+  and stress, with a configurable linear threshold around zero.
+- **Symmetric around zero** gives equal positive and negative limits.
+- **Colormap**, reverse, and invalid-value color control visual presentation.
+- **Restore Defaults** returns to field-specific defaults. IPF RGB maps retain
+  their crystallographic color key and are not rescaled by these controls.
+
+## Runtime Orientation and Preservation Policy
+
+The default `orientation_source: indexed` runs kikuchipy Hough indexing backed
+by PyEBSDIndex. Successfully indexed rotations are used in memory to generate
+simulated Kikuchi lines for overlays and band-width profile placement. If one
+pixel cannot be indexed, that pixel uses its acquisition Euler orientation as a
+fallback; the fallback is explicitly recorded rather than hidden.
+
+Use `orientation_source: acquisition` when simulated lines and width extraction
+must follow the Euler angles supplied by the original CTF/ANG/H5/OH5 data. The
+legacy value `original` is accepted as an alias for `acquisition`.
+
+In both modes, live-indexed Euler values are runtime-only and are never written
+to ANG, H5, or OH5. IPF maps always use original acquisition Euler angles.
+Generated ANG files preserve their original Euler columns and replace only the
+legacy PRIAS metric columns:
 
 - `Band_Width` -> `PRIAS Bottom Strip`
 - `psnr` -> `PRIAS Center Square`
@@ -165,6 +197,11 @@ The modified HDF5/OH5 data group includes fields such as:
 - `band_valid`
 - `strain`
 - `stress`
+- `indexing_success` (`1` success, `0` failure, `-1` not attempted)
+- `orientation_fallback` (`1` when acquisition fallback was required)
+- `orientation_source_used` (`1` indexed, `0` acquisition)
+- `indexing_fit`
+- `indexing_confidence`
 
 The bottom log console records preparation, simulation, per-stage progress,
 live processing status, export paths, warnings, and failures. Use **Save...** in
@@ -180,9 +217,11 @@ the log console when you need a text record of a run for debugging or reporting.
 - If the band profile is shown but marked invalid, the detector found a finite
   profile but it did not pass the configured quality criteria. Inspect `psnr`,
   `min_psnr`, and the overlay geometry.
+- If **Index/Fallback** contains `1`, inspect those patterns individually. The
+  measurement used acquisition Euler lines because live indexing failed there.
 - If maps look structurally wrong, compare IPF maps from the source, generated
   ANG, and generated OH5. They should preserve the original microstructure
   because exported Euler angles are not replaced by diagnostic Hough solutions.
-- If processing is slow, use a tiny fixture or a copied subset while tuning PC.
-  For original-orientation production runs, avoid cropping only the pattern
-  stack because it must remain aligned with the original Euler grid.
+- If processing is slow, use a tiny fixture or copied subset while tuning PC.
+  The full pattern grid must remain aligned with acquisition Euler arrays so
+  indexed-mode fallback remains correct.

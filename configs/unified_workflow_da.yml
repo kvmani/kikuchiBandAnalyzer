@@ -34,8 +34,33 @@ band_profile:
 desired_hkl_ref_width: 1.0
 elastic_modulus: 205000000000.0
 debug: false
+orientation_source: indexed
 
 hough:
   enabled: true
   use_indexed_orientation: true
   n_bands: 5
+
+map_display:
+  Band_Width:
+    range_mode: auto
+    percentile_low: 2.0
+    percentile_high: 98.0
+    scale: linear
+    colormap: viridis
+  strain:
+    range_mode: auto
+    percentile_low: 2.0
+    percentile_high: 98.0
+    scale: symlog
+    symmetric: true
+    linthresh: 0.001
+    colormap: coolwarm
+  stress:
+    range_mode: auto
+    percentile_low: 2.0
+    percentile_high: 98.0
+    scale: symlog
+    symmetric: true
+    linthresh: 1000000.0
+    colormap: coolwarm
